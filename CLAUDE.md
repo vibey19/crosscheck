@@ -3,7 +3,10 @@
 A contradiction-finding engine for scientific papers. Full brief: **`PLAN.md`** (read it before
 non-trivial work). This file is the pointer that survives context loss — keep it ~a page.
 
-**Current phase: Phase 0 — skeleton and ingest.** Update this line as the project moves.
+**Current phase: Phase 0 complete; next is Phase 1 — claims and self-consistency.** Update as the project moves.
+
+Phase 0 shipped: arXiv fetch + LaTeX parse producing a section tree with offsets, persisted to Neon.
+Verified against 2203.15556, 2001.08361 and 1706.03762.
 
 Offsets are in *normalized-text space*, not raw LaTeX. Never store an offset without the
 `parser_version` that produced it.
