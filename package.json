@@ -12,7 +12,8 @@
     "crosscheck": "tsx src/cli/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@unified-latex/unified-latex-util-parse": "^1.8.4",

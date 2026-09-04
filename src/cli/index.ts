@@ -3,18 +3,25 @@ import { closeDb, getDb } from '../db/client.js';
 import { documents, sections as sectionsTable } from '../db/schema.js';
 import { meter } from '../instrument/meter.js';
 import { ingestDocument, sectionHash, sectionText, type IngestedDocument } from '../ingest/pipeline.js';
+import { extractDocumentClaims, getDocumentId } from '../claims/pipeline.js';
+import { detectIntraDocument, type IntraFinding } from '../detect/intra.js';
 
 const USAGE = `crosscheck — cross-document contradiction engine
 
 Usage:
-  npm run crosscheck -- ingest <arxiv-id> [--json] [--save] [--preview N]
+  npm run crosscheck -- ingest  <arxiv-id> [--json] [--save] [--preview N]
+  npm run crosscheck -- analyze <arxiv-id> [--json]
+
+Commands:
+  ingest    Fetch a paper and print its section tree with character offsets
+  analyze   Ingest, extract claims, and check the paper against itself
 
 Arguments:
   <arxiv-id>    2301.12345, 2301.12345v2, math/0309136, or an arxiv.org URL
 
 Options:
-  --json        Emit the section tree as JSON instead of a table
-  --save        Persist document and sections to Postgres
+  --json        Emit machine-readable JSON instead of a table
+  --save        Persist document and sections to Postgres (ingest only)
   --preview N   Show the first N characters of each section (default 0)
 `;
 
@@ -84,9 +91,85 @@ async function save(doc: IngestedDocument): Promise<void> {
   process.stdout.write(`Saved ${doc.sections.length} sections for ${doc.idWithVersion}.\n`);
 }
 
+function printFindings(results: IntraFinding[], url: string): void {
+  const out = process.stdout;
+  if (results.length === 0) {
+    out.write('\nNo numeric self-inconsistencies found.\n');
+    return;
+  }
+
+  out.write(`\n${results.length} numeric self-inconsistenc${results.length === 1 ? 'y' : 'ies'} found\n`);
+  for (const [index, finding] of results.entries()) {
+    const { a, b, conflict } = finding;
+    out.write(`\n${index + 1}. ${conflict.a.subject}\n`);
+    out.write(`   ${conflict.a.value} vs ${conflict.b.value} ${conflict.a.unit ?? ''}`.trimEnd());
+    out.write(`   (${(conflict.relativeDifference * 100).toFixed(1)}% apart, confidence ${finding.confidence.toFixed(2)})\n\n`);
+    for (const side of [a, b]) {
+      out.write(`   ${side.sectionPath}  [${side.charStart}, ${side.charEnd})\n`);
+      out.write(`     "${side.text.replace(/\s+/g, ' ').slice(0, 150)}"\n`);
+    }
+    out.write(`   ${url}\n`);
+  }
+}
+
+async function analyze(arxivId: string, asJson: boolean): Promise<void> {
+  const doc = await ingestDocument(arxivId);
+  await save(doc);
+
+  const extraction = await extractDocumentClaims(doc);
+  const documentId = await getDocumentId(doc.arxivId);
+  if (!documentId) throw new Error(`${doc.idWithVersion} was not persisted.`);
+
+  const { stats, results } = await detectIntraDocument(documentId);
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({
+      document: { arxivId: doc.arxivId, version: doc.version, title: doc.title, url: doc.url },
+      extraction,
+      detection: stats,
+      findings: results.map((f) => ({
+        conflictType: f.conflictType,
+        confidence: f.confidence,
+        rationale: f.rationale,
+        similarity: f.similarity,
+        values: [f.conflict.a.value, f.conflict.b.value],
+        unit: f.conflict.a.unit,
+        spans: [
+          { section: f.a.sectionPath, charStart: f.a.charStart, charEnd: f.a.charEnd, text: f.a.text },
+          { section: f.b.sectionPath, charStart: f.b.charStart, charEnd: f.b.charEnd, text: f.b.text },
+        ],
+      })),
+      usage: meter.snapshot(),
+    }, null, 2)}\n`);
+    return;
+  }
+
+  const out = process.stdout;
+  out.write(`\n${doc.title}\n${doc.url}\n\n`);
+  out.write(`claims:      ${extraction.claims} from ${extraction.sectionsConsidered} sections `);
+  out.write(`(${extraction.sectionsFromCache} cached, ${extraction.llmCalls} LLM calls)\n`);
+  out.write(`spans:       ${extraction.spansResolved}/${extraction.claims} located verbatim\n`);
+  out.write(`types:       ${Object.entries(extraction.byType).map(([k, v]) => `${k} ${v}`).join(' · ')}\n`);
+  out.write(`candidates:  ${stats.candidatePairs} pairs from ${stats.allPairsBaseline.toLocaleString()} possible `);
+  out.write(`(${stats.allPairsBaseline > 0 ? (100 - (stats.candidatePairs / stats.allPairsBaseline) * 100).toFixed(1) : '0'}% filtered out)\n`);
+  out.write(`type filter: ${stats.survivedTypeFilter} survived · ${stats.numericPairsCompared} quantity comparisons\n`);
+
+  printFindings(results, doc.url);
+
+  const gen = meter.totals('llm.generate');
+  const emb = meter.totals('llm.embed');
+  out.write(`\nLLM: ${gen.calls} generate calls (${gen.inputTokens + gen.outputTokens} tokens) · `);
+  out.write(`${emb.calls} embed calls (${emb.items} vectors)\n`);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const [command, ...rest] = argv;
+
+  if (command === 'analyze' && rest.length > 0 && !rest[0]?.startsWith('-')) {
+    await analyze(rest[0]!, rest.includes('--json'));
+    return;
+  }
 
   if (command !== 'ingest' || rest.length === 0 || rest[0]?.startsWith('-')) {
     process.stdout.write(USAGE);

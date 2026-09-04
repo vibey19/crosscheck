@@ -8,6 +8,13 @@
       "when": 1788510171474,
       "tag": "0000_lonely_marvel_apes",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788511658664,
+      "tag": "0001_tan_norman_osborn",
+      "breakpoints": true
     }
   ]
 }

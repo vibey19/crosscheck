@@ -1,6 +1,6 @@
 import { getConfig } from '../../config.js';
 import { meter } from '../../instrument/meter.js';
-import { RateLimiter } from './rate-limiter.js';
+import { RateLimiter } from '../../util/rate-limiter.js';
 
 let limiter: RateLimiter | undefined;
 

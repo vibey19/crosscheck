@@ -18,6 +18,12 @@ const schema = z.object({
   GEMINI_MODEL: z.string().min(1).default('gemini-3.6-flash'),
   GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
   GEMINI_EMBEDDING_DIMS: z.coerce.number().int().positive().default(768),
+  /**
+   * Free-tier generate_content limit measured at 20 RPM for gemini-3.6-flash (2026-09-04).
+   * Default sits under it, because the quota is shared with anything else using the key.
+   */
+  GEMINI_MAX_RPM: z.coerce.number().int().positive().default(15),
+  GEMINI_EMBED_MAX_RPM: z.coerce.number().int().positive().default(60),
 
   ARXIV_USER_AGENT: z.string().min(1),
   // arXiv's terms of use set the floor at one request per three seconds.
