@@ -34,13 +34,17 @@ taxonomy is what makes the verifier and the benchmark tractable.
 
 ## Stack — every component free, no credit card
 
-Next.js (App Router) + TypeScript · Neon Postgres + pgvector · Drizzle · `gemini-2.5-flash` ·
+Next.js (App Router) + TypeScript · Neon Postgres + pgvector · Drizzle · `gemini-3.6-flash` ·
 `gemini-embedding-001` @ 768 dims · Vercel Hobby (**set `maxDuration` explicitly**; legacy default is
 10 s) · Auth.js anonymous session · GitHub Actions for the nightly eval. No blob storage.
 
 ### Do not use — with reasons
 
 - **`text-embedding-004`** — deprecated 14 Jan 2026. Use `gemini-embedding-001`.
+- **The entire `gemini-2.5-*` line** — returns 404 "no longer available to new users" (verified
+  2026-09-04). It still appears in the `/models` listing, so listing a model is not proof a key can
+  call it. PLAN.md specifies `gemini-2.5-flash`; that is stale. We pin `gemini-3.6-flash`, Google's
+  named migration target.
 - **Firebase / Firebase Storage** — requires the Blaze plan (a credit card) since 3 Feb 2026.
 - **Supabase** — free tier pauses after a week idle and needs a *manual dashboard* unpause. Fatal for
   a cold demo link. Neon auto-resumes; that is the whole reason.
@@ -69,6 +73,19 @@ Resolved (schema is explicitly "a starting point, not a mandate"):
 This is sound because `documents` pins `arxiv_id` + `version`, and an arXiv version is immutable — so
 offsets stay reproducible without us holding the text. `documents.parser_version` invalidates rows
 loudly if the parser changes, rather than corrupting offsets silently.
+
+## Gemini specifics — measured, not assumed (2026-09-04)
+
+- **Always send `thinkingConfig: { thinkingLevel: 'low' }`** on extraction and classification.
+  Reasoning tokens otherwise dominate: 654 tokens/call vs 158 for byte-identical output, a 4.1x
+  difference that decides whether a corpus finishes inside the free tier.
+- **`gemini-embedding-001` at 768 dims does NOT return normalised vectors** — measured L2 norm
+  0.582. Only the 3072 default is pre-normalised. Normalise before inserting into pgvector, or
+  every cosine distance is silently wrong.
+- Structured output via `responseMimeType: 'application/json'` + `responseSchema` works and is the
+  intended mechanism for stages 2 and 5.
+- Free-tier RPM/TPM/RPD are not published in the docs; AI Studio shows them per project only after
+  usage exists. Design for resumability rather than a fixed assumed cap.
 
 ## Non-negotiable practices
 

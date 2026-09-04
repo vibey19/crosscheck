@@ -15,7 +15,7 @@ const schema = z.object({
   DATABASE_URL_UNPOOLED: z.string().url(),
 
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+  GEMINI_MODEL: z.string().min(1).default('gemini-3.6-flash'),
   GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
   GEMINI_EMBEDDING_DIMS: z.coerce.number().int().positive().default(768),
 
