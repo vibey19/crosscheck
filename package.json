@@ -1,0 +1,32 @@
+{
+  "name": "crosscheck",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A cross-document contradiction engine for scientific literature.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "crosscheck": "tsx src/cli/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@unified-latex/unified-latex-util-parse": "^1.8.4",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.23.0",
+    "tar-stream": "^3.2.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "@types/tar-stream": "^3.1.4",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
