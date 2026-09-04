@@ -162,6 +162,26 @@ export const extractionCache = pgTable(
   ],
 );
 
+/**
+ * Memoised stage-5 classifications, keyed on the pair's text plus model and prompt version.
+ *
+ * Beyond saving quota, this is what makes the verifier ablation honest: both arms consume the
+ * identical set of stage-5 verdicts, so the only difference between them is stage 6.
+ */
+export const classificationCache = pgTable(
+  'classification_cache',
+  {
+    contentHash: text('content_hash').notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    result: jsonb('result').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('classification_cache_key_idx').on(table.contentHash, table.model, table.promptVersion),
+  ],
+);
+
 /** Claim pairs that survived candidate generation — the stage-4 cost killer. */
 export const candidatePairs = pgTable(
   'candidate_pairs',

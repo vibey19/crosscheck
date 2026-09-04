@@ -10,7 +10,7 @@ const USAGE = `crosscheck — cross-document contradiction engine
 
 Usage:
   npm run crosscheck -- ingest  <arxiv-id> [--json] [--save] [--preview N]
-  npm run crosscheck -- analyze <arxiv-id> [--json]
+  npm run crosscheck -- analyze <arxiv-id> [--json] [--no-verifier] [--no-classifier]
 
 Commands:
   ingest    Fetch a paper and print its section tree with character offsets
@@ -23,6 +23,10 @@ Options:
   --json        Emit machine-readable JSON instead of a table
   --save        Persist document and sections to Postgres (ingest only)
   --preview N   Show the first N characters of each section (default 0)
+
+Ablation (analyze only):
+  --no-classifier  Skip stage 5, entailment classification
+  --no-verifier    Skip stage 6, adversarial verification
 `;
 
 function printTree(doc: IngestedDocument, previewChars: number): void {
@@ -112,7 +116,11 @@ function printFindings(results: IntraFinding[], url: string): void {
   }
 }
 
-async function analyze(arxivId: string, asJson: boolean): Promise<void> {
+async function analyze(
+  arxivId: string,
+  asJson: boolean,
+  refine: { classify: boolean; verify: boolean },
+): Promise<void> {
   const doc = await ingestDocument(arxivId);
   await save(doc);
 
@@ -120,13 +128,14 @@ async function analyze(arxivId: string, asJson: boolean): Promise<void> {
   const documentId = await getDocumentId(doc.arxivId);
   if (!documentId) throw new Error(`${doc.idWithVersion} was not persisted.`);
 
-  const { stats, results } = await detectIntraDocument(documentId);
+  const { stats, results } = await detectIntraDocument(documentId, refine);
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify({
       document: { arxivId: doc.arxivId, version: doc.version, title: doc.title, url: doc.url },
       extraction,
       detection: stats,
+      ablation: refine,
       findings: results.map((f) => ({
         conflictType: f.conflictType,
         confidence: f.confidence,
@@ -153,6 +162,12 @@ async function analyze(arxivId: string, asJson: boolean): Promise<void> {
   out.write(`candidates:  ${stats.candidatePairs} pairs from ${stats.allPairsBaseline.toLocaleString()} possible `);
   out.write(`(${stats.allPairsBaseline > 0 ? (100 - (stats.candidatePairs / stats.allPairsBaseline) * 100).toFixed(1) : '0'}% filtered out)\n`);
   out.write(`type filter: ${stats.survivedTypeFilter} survived · ${stats.numericPairsCompared} quantity comparisons\n`);
+  out.write(`arithmetic:  ${stats.arithmeticCandidates} candidate conflicts\n`);
+  if (stats.refine) {
+    const r = stats.refine;
+    out.write(`stage 5:     ${refine.classify ? `${r.classifierCalls} calls · ${r.rejectedDifferentSubject} different subject · ${r.rejectedNotContradiction} not a contradiction` : 'DISABLED'}\n`);
+    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended` : 'DISABLED'}\n`);
+  }
 
   printFindings(results, doc.url);
 
@@ -167,7 +182,10 @@ async function main(): Promise<void> {
   const [command, ...rest] = argv;
 
   if (command === 'analyze' && rest.length > 0 && !rest[0]?.startsWith('-')) {
-    await analyze(rest[0]!, rest.includes('--json'));
+    await analyze(rest[0]!, rest.includes('--json'), {
+      classify: !rest.includes('--no-classifier'),
+      verify: !rest.includes('--no-verifier'),
+    });
     return;
   }
 

@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '../db/client.js';
 import { candidatePairs, findings, type Quantity } from '../db/schema.js';
 import { conflictConfidence, describesSameMeasurement, findNumericConflict, type NumericConflict } from './arithmetic.js';
+import { refineFindings, type RefineOptions, type RefineStats } from './refine.js';
 
 export interface DetectionStats {
   claims: number;
@@ -10,7 +11,10 @@ export interface DetectionStats {
   candidatePairs: number;
   survivedTypeFilter: number;
   numericPairsCompared: number;
+  /** Candidates produced by the deterministic arithmetic check, before stages 5 and 6. */
+  arithmeticCandidates: number;
   findings: number;
+  refine: RefineStats | null;
 }
 
 export interface IntraFinding {
@@ -131,7 +135,10 @@ async function countClaims(documentId: string): Promise<number> {
  * judges a verdict here, so results are reproducible. Entailment classification and the adversarial
  * verifier arrive in Phase 2.
  */
-export async function detectIntraDocument(documentId: string): Promise<{ stats: DetectionStats; results: IntraFinding[] }> {
+export async function detectIntraDocument(
+  documentId: string,
+  options: RefineOptions = { classify: true, verify: true },
+): Promise<{ stats: DetectionStats; results: IntraFinding[] }> {
   const db = getDb();
 
   const claims = await countClaims(documentId);
@@ -139,7 +146,7 @@ export async function detectIntraDocument(documentId: string): Promise<{ stats: 
   const typed = candidates.filter((c) => c.a.claimType === c.b.claimType);
   const numericPairs = typed.filter((c) => c.a.claimType === 'NUMERIC');
 
-  const results: IntraFinding[] = [];
+  const arithmeticFindings: IntraFinding[] = [];
   let compared = 0;
 
   for (const pair of numericPairs) {
@@ -160,7 +167,7 @@ export async function detectIntraDocument(documentId: string): Promise<{ stats: 
 
     if (!best) continue;
     const { conflict } = best;
-    results.push({
+    arithmeticFindings.push({
       conflictType: 'NUMERIC',
       confidence: conflictConfidence(conflict),
       rationale:
@@ -175,6 +182,10 @@ export async function detectIntraDocument(documentId: string): Promise<{ stats: 
       similarity: pair.similarity,
     });
   }
+
+  // Stages 5 and 6. Everything above this line is deterministic.
+  const { results: refined, stats: refineStats } = await refineFindings(arithmeticFindings, options);
+  const results = refined.filter((row) => row.reported).map((row) => row.finding);
 
   // Replace prior results for this document so re-running is idempotent.
   await db.execute(sql`
@@ -212,7 +223,8 @@ export async function detectIntraDocument(documentId: string): Promise<{ stats: 
           verdict: 'CONTRADICTS',
           confidence: finding.confidence,
           rationale: finding.rationale,
-          detector: 'arithmetic',
+          detector: options.classify || options.verify ? 'arithmetic+llm' : 'arithmetic',
+          verifierPassed: options.verify ? true : null,
           spans: {
             a: { claimId: finding.a.id, text: finding.a.text, charStart: finding.a.charStart, charEnd: finding.a.charEnd, section: finding.a.sectionPath },
             b: { claimId: finding.b.id, text: finding.b.text, charStart: finding.b.charStart, charEnd: finding.b.charEnd, section: finding.b.sectionPath },
@@ -229,7 +241,9 @@ export async function detectIntraDocument(documentId: string): Promise<{ stats: 
       candidatePairs: candidates.length,
       survivedTypeFilter: typed.length,
       numericPairsCompared: compared,
+      arithmeticCandidates: arithmeticFindings.length,
       findings: results.length,
+      refine: refineStats,
     },
     results,
   };

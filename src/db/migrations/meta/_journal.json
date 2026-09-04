@@ -15,6 +15,13 @@
       "when": 1788511658664,
       "tag": "0001_tan_norman_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788515852176,
+      "tag": "0002_next_chameleon",
+      "breakpoints": true
     }
   ]
 }
