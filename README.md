@@ -10,13 +10,17 @@ It is not a chatbot and not RAG question-answering. The output is a structured r
 
 ## Status
 
-**Phase 0 of 4 — ingest.** No contradiction detection yet.
+**Phase 1 of 4 — claims and self-consistency.** Cross-document detection is not built yet.
 
 The results table this README will eventually lead with does not exist, because the benchmark that
 produces it has not been built. It will not be filled in with anything the harness did not measure.
 
-What works today: fetch an arXiv paper, parse its LaTeX source, and produce a section tree with
-character offsets, persisted to Postgres.
+What works today: fetch an arXiv paper, parse its LaTeX source into a section tree with character
+offsets, extract atomic claims with structured measurement labels, embed them into pgvector, and
+detect numeric self-inconsistencies within the paper.
+
+On *Attention Is All You Need*, it reports one finding: Table 2 gives 41.8 BLEU for the big model
+on WMT14 EN-FR, while the prose below it says 41.0.
 
 ## Conflict taxonomy
 
@@ -44,10 +48,14 @@ npm run db:migrate
 ## Usage
 
 ```bash
-npm run crosscheck -- ingest 2203.15556              # print the section tree
-npm run crosscheck -- ingest 2203.15556 --preview 200 # with text previews
-npm run crosscheck -- ingest 2203.15556 --json       # machine-readable, includes usage metrics
-npm run crosscheck -- ingest 2203.15556 --save       # persist to Postgres
+npm run crosscheck -- ingest  2203.15556              # print the section tree
+npm run crosscheck -- ingest  2203.15556 --preview 200 # with text previews
+npm run crosscheck -- ingest  2203.15556 --save       # persist to Postgres
+
+npm run crosscheck -- analyze 1706.03762              # extract claims and check self-consistency
+npm run crosscheck -- analyze 1706.03762 --json       # machine-readable, includes usage metrics
+
+npm test                                              # deterministic detector tests
 ```
 
 Accepts `2301.12345`, `2301.12345v2`, `math/0309136`, or an arxiv.org URL. Without an explicit
@@ -69,8 +77,18 @@ src/config.ts          env loading and validation
 src/instrument/        LLM call, token and latency metering
 src/ingest/arxiv/      rate-limited fetching, metadata, e-print extraction
 src/ingest/latex/      include resolution, AST walk, text normalisation
+src/llm/               metered Gemini client, rate limiting, retries
+src/claims/            extraction prompt, caching, span location
+src/detect/            deterministic arithmetic check, candidate generation
 src/db/                Drizzle schema, client, migrations
 src/cli/               command-line entry point
 ```
+
+## Free-tier limits worth knowing
+
+The Gemini free tier allows **20 generate requests per day, per model** — not per minute, despite
+what a 429's retry hint implies. Extraction therefore batches many sections into one call and
+memoises per section on content hash; a paper costs about three calls, and re-running one costs
+none. Each model carries its own separate daily allowance.
 
 See `CLAUDE.md` for project constraints and `PLAN.md` for the full brief.

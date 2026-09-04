@@ -3,10 +3,12 @@
 A contradiction-finding engine for scientific papers. Full brief: **`PLAN.md`** (read it before
 non-trivial work). This file is the pointer that survives context loss — keep it ~a page.
 
-**Current phase: Phase 0 complete; next is Phase 1 — claims and self-consistency.** Update as the project moves.
+**Current phase: Phase 1 complete; next is Phase 2 — cross-document detection.** Update as the project moves.
 
-Phase 0 shipped: arXiv fetch + LaTeX parse producing a section tree with offsets, persisted to Neon.
-Verified against 2203.15556, 2001.08361 and 1706.03762.
+Phase 0: arXiv fetch + LaTeX parse producing a section tree with offsets, persisted to Neon.
+Phase 1: batched claim extraction, pgvector embeddings, deterministic intra-document NUMERIC
+detection. Ship criterion met — it finds the real 41.8-vs-41.0 EN-FR BLEU discrepancy in
+1706.03762 as its only finding for that paper.
 
 Offsets are in *normalized-text space*, not raw LaTeX. Never store an offset without the
 `parser_version` that produced it.
@@ -84,8 +86,16 @@ loudly if the parser changes, rather than corrupting offsets silently.
   every cosine distance is silently wrong.
 - Structured output via `responseMimeType: 'application/json'` + `responseSchema` works and is the
   intended mechanism for stages 2 and 5.
-- Free-tier RPM/TPM/RPD are not published in the docs; AI Studio shows them per project only after
-  usage exists. Design for resumability rather than a fixed assumed cap.
+- **The free-tier cap is 20 generate requests per DAY per model**, quota id
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier`. A 429's RetryInfo hint says ~40s, which is
+  misleading — waiting does not help until the next day. Each model has its own allowance, so
+  switching model is a way to keep working. Batch sections into one call and cache per section;
+  a paper should cost ~3 calls, and re-running a cached paper zero.
+- **Deciding that two numbers describe the same measurement must stay deterministic.** Embedding
+  similarity cannot do it — "BLEU on newstest2013 dev" and "BLEU on WMT14 EN-DE" are near-identical
+  as text and are different measurements. Quantities carry `metric`/`system`/`dataset` labels and
+  `describesSameMeasurement` compares them by token set. Leaving this to similarity produced 17
+  findings on one paper, all false.
 
 ## Non-negotiable practices
 
