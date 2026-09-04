@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { fetchEprintSource } from './arxiv/eprint.js';
 import { formatArxivId, parseArxivId, absUrl } from './arxiv/id.js';
 import { fetchMetadata } from './arxiv/metadata.js';
-import { expandIncludes, findMainTex } from './latex/resolve.js';
+import { expandIncludes, expandNewcommands, findMainTex } from './latex/resolve.js';
 import { parseLatex, type ParsedSection } from './latex/parse.js';
 
 export interface IngestedDocument {
@@ -43,7 +43,8 @@ export async function ingestDocument(rawId: string): Promise<IngestedDocument> {
   }
 
   const main = findMainTex(source.files);
-  const expanded = expandIncludes(main.content, source.files);
+  // Includes first: definitions live in the preamble, usages in the files it pulls in.
+  const expanded = expandNewcommands(expandIncludes(main.content, source.files));
   const parsed = parseLatex(expanded);
 
   if (parsed.sections.length === 0) {

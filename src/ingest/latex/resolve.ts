@@ -28,6 +28,54 @@ function lookup(files: Map<string, string>, target: string): string | undefined 
   return undefined;
 }
 
+/**
+ * Substitutes zero-argument `\newcommand` and `\def` macros.
+ *
+ * Papers routinely define their model or system name as a macro (`\newcommand{\chinchilla}{Chinchilla}`)
+ * and then use it in section headings. Left unexpanded, those headings parse to an empty title,
+ * which loses the very name a cross-document claim needs to be about.
+ */
+export function expandNewcommands(tex: string): string {
+  const definitions = new Map<string, string>();
+
+  const patterns = [
+    // \newcommand{\foo}{body} and \renewcommand*{\foo}{body}
+    /\\(?:re)?newcommand\*?\s*\{\s*\\([A-Za-z@]+)\s*\}\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g,
+    // \def\foo{body}
+    /\\def\s*\\([A-Za-z@]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of tex.matchAll(pattern)) {
+      const [, name, body] = match;
+      // Only zero-argument macros. Anything taking parameters needs real expansion, and a wrong
+      // substitution would corrupt offsets more quietly than leaving the macro alone.
+      if (name && body !== undefined && !/\[\d+\]/.test(body) && !/#\d/.test(body)) {
+        definitions.set(name, body);
+      }
+    }
+  }
+
+  if (definitions.size === 0) return tex;
+
+  let result = tex;
+  // Bounded: a definition may reference another, but cycles must not hang ingest.
+  for (let pass = 0; pass < 3; pass += 1) {
+    let changed = false;
+    for (const [name, body] of definitions) {
+      // Trailing boundary stops \gpt matching inside \gpthree.
+      const usage = new RegExp(`\\\\${name}(?![A-Za-z@])(?:\\s*\\{\\s*\\})?`, 'g');
+      const next = result.replace(usage, body);
+      if (next !== result) {
+        result = next;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return result;
+}
+
 export function expandIncludes(tex: string, files: Map<string, string>, depth = 0): string {
   if (depth >= MAX_INCLUDE_DEPTH) return tex;
   return stripComments(tex).replace(

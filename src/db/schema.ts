@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
-  index, integer, pgTable, text, timestamp, uniqueIndex, uuid,
+  check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -51,8 +51,9 @@ export const sections = pgTable(
   (table) => [
     uniqueIndex('sections_document_ordinal_idx').on(table.documentId, table.ordinal),
     index('sections_document_idx').on(table.documentId),
-    // Offsets must describe a real, forward span.
-    sql`constraint sections_span_valid check (char_end > char_start and char_start >= 0)`,
+    // Offsets must describe a real, forward span. Enforced in the database because a corrupted
+    // offset is silent everywhere else until a report quotes the wrong sentence.
+    check('sections_span_valid', sql`${table.charEnd} > ${table.charStart} and ${table.charStart} >= 0`),
   ],
 );
 

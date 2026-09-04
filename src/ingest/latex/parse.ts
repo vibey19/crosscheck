@@ -36,11 +36,47 @@ const CAPTION_ONLY_ENVIRONMENTS = new Set(['figure', 'figure*', 'subfigure', 'wr
 /** Tabular-like environments, where `&` and `\\` carry the structure claim extraction needs. */
 const TABULAR_ENVIRONMENTS = new Set(['tabular', 'tabularx', 'array', 'longtable', 'tabu']);
 
+/**
+ * Signatures for macros unified-latex does not know by default.
+ *
+ * Without a signature the parser leaves arguments as loose groups, so dropping the macro still
+ * spills its contents — bibliography keys and column specifiers end up in the prose that claim
+ * extraction reads. `o` marks an optional argument, `m` a mandatory one.
+ */
+const MACRO_SIGNATURES = {
+  cite: { signature: 'o o m' },
+  citep: { signature: 'o o m' },
+  citet: { signature: 'o o m' },
+  citealp: { signature: 'o o m' },
+  citeauthor: { signature: 'o o m' },
+  citeyear: { signature: 'o o m' },
+  newcite: { signature: 'o o m' },
+  cmidrule: { signature: 'o m' },
+  midrule: { signature: '' },
+  toprule: { signature: '' },
+  bottomrule: { signature: '' },
+  multirow: { signature: 'm m m' },
+  href: { signature: 'm m' },
+  url: { signature: 'm' },
+  subfloat: { signature: 'o m' },
+  specialrule: { signature: 'm m m' },
+  addlinespace: { signature: 'o' },
+  cline: { signature: 'm' },
+  resizebox: { signature: 'm m m' },
+  scalebox: { signature: 'm m' },
+} as const;
+
+/** Macros where only the final argument is prose — `\multicolumn{2}{c}{Title}` is just `Title`. */
+const LAST_ARG_ONLY = new Set(['multicolumn', 'multirow', 'href', 'subfloat', 'caption', 'parbox']);
+
 /** Macros dropped along with their arguments — bookkeeping, not prose. */
 const DROP_WITH_ARGS = new Set([
   'label', 'cite', 'citep', 'citet', 'citealp', 'ref', 'eqref', 'autoref', 'cref', 'Cref',
   'usepackage', 'documentclass', 'bibliography', 'bibliographystyle', 'vspace', 'hspace',
   'includegraphics', 'newcommand', 'renewcommand', 'def', 'footnote', 'input', 'include',
+  'citealt', 'citeauthor', 'citeyear', 'newcite', 'nocite', 'url', 'cmidrule', 'midrule',
+  'toprule', 'bottomrule', 'hline', 'rule', 'setlength', 'centering', 'small', 'footnotesize',
+  'specialrule', 'addlinespace', 'cline', 'arrayrulewidth', 'resizebox', 'scalebox',
 ]);
 
 /** Macros whose argument text is kept but the macro itself contributes nothing. */
@@ -133,14 +169,29 @@ function emit(nodes: Node[], out: string[], options: EmitOptions): void {
           out.push('\n');
           break;
         }
+        // Superscript and subscript are macros carrying their argument. Dropping the marker turns
+        // 10^{18} into "1018", which would make a NUMERIC comparison silently wrong.
+        if (name === '^' || name === '_') {
+          out.push(name);
+          const inner: string[] = [];
+          for (const arg of node.args ?? []) emit(asNodes(arg.content), inner, options);
+          const rendered = inner.join('').trim();
+          out.push(rendered.length > 1 ? `{${rendered}}` : rendered);
+          break;
+        }
         if (DROP_WITH_ARGS.has(name)) break;
         const literal = literalFor(name);
         if (literal !== undefined) {
           out.push(literal);
           break;
         }
+        const args = node.args ?? [];
+        if (LAST_ARG_ONLY.has(name)) {
+          emit(asNodes(args[args.length - 1]?.content), out, options);
+          break;
+        }
         if (TRANSPARENT.has(name) || !SECTION_LEVELS[name]) {
-          for (const arg of node.args ?? []) emit(asNodes(arg.content), out, options);
+          for (const arg of args) emit(asNodes(arg.content), out, options);
         }
         break;
       }
@@ -182,8 +233,23 @@ class SectionBuilder {
   private readonly counters = [0, 0, 0];
   private open: { path: string; title: string; level: number; charStart: number } | undefined;
   private ordinal = 0;
+  private inAppendix = false;
 
   constructor(private readonly cursor: () => number) {}
+
+  /** After `\appendix`, LaTeX numbers top-level sections A, B, C — mirror that so paths match the PDF. */
+  beginAppendix(): void {
+    this.inAppendix = true;
+    this.counters.fill(0);
+  }
+
+  private label(level: number): string {
+    const parts = this.counters.slice(0, level).map(String);
+    if (this.inAppendix && parts.length > 0) {
+      parts[0] = String.fromCharCode(64 + (this.counters[0] ?? 1));
+    }
+    return parts.join('.');
+  }
 
   start(title: string, level: number, numbered: boolean): void {
     this.close();
@@ -191,7 +257,7 @@ class SectionBuilder {
     if (numbered) {
       this.counters[level - 1] = (this.counters[level - 1] ?? 0) + 1;
       for (let i = level; i < this.counters.length; i += 1) this.counters[i] = 0;
-      path = `${this.counters.slice(0, level).join('.')} ${title}`;
+      path = `${this.label(level)} ${title}`;
     }
     this.open = { path, title, level, charStart: this.cursor() };
   }
@@ -212,7 +278,7 @@ class SectionBuilder {
 }
 
 export function parseLatex(source: string): ParsedDocument {
-  const ast = getParser().parse(source);
+  const ast = getParser({ macros: MACRO_SIGNATURES } as never).parse(source);
 
   const body: Node[] = [];
   flatten(asNodes((ast as unknown as Node).content), body);
@@ -233,12 +299,16 @@ export function parseLatex(source: string): ParsedDocument {
 
     if (node.type === 'macro') {
       const name = typeof node.content === 'string' ? node.content : '';
+      if (name === 'appendix') {
+        builder.beginAppendix();
+        continue;
+      }
       const level = SECTION_LEVELS[name];
       if (level) {
         const args = node.args ?? [];
         // A starred heading carries a `*` argument and is unnumbered.
         const starred = args.some((a) => argText(a) === '*');
-        const title = argText(args[args.length - 1]);
+        const title = argText(args[args.length - 1]) || '(untitled)';
         chunks.push('\n\n');
         builder.start(title, level, !starred);
         chunks.push(`${title}\n\n`);

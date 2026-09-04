@@ -7,7 +7,7 @@
  */
 
 /** Bumped whenever normalisation or section-walking changes in a way that moves offsets. */
-export const PARSER_VERSION = '1';
+export const PARSER_VERSION = '2';
 
 /** Collapses runs of spaces/tabs but preserves paragraph breaks, which carry section structure. */
 export function collapseWhitespace(text: string): string {

@@ -12,31 +12,35 @@ function getLimiter(): RateLimiter {
 /**
  * The single doorway to arxiv.org. Everything is rate limited and metered; nothing else in the
  * codebase should call fetch against an arXiv host.
+ *
+ * The body is buffered inside the metered region so transfer size and latency are both recorded —
+ * the download dominates ingest wall-clock, and a figure nobody captured cannot be reported later.
  */
-export async function arxivFetch(url: string, accept?: string): Promise<Response> {
+async function request(url: string): Promise<Uint8Array> {
   const { ARXIV_USER_AGENT } = getConfig();
   return getLimiter().run(() =>
-    meter.measure('arxiv.http', new URL(url).pathname, async () => {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': ARXIV_USER_AGENT,
-          ...(accept ? { Accept: accept } : {}),
-        },
-        redirect: 'follow',
-      });
-      if (!response.ok) {
-        throw new Error(`arXiv responded ${response.status} ${response.statusText} for ${url}`);
-      }
-      return response;
-    }),
+    meter.measure(
+      'arxiv.http',
+      new URL(url).pathname,
+      async () => {
+        const response = await fetch(url, {
+          headers: { 'User-Agent': ARXIV_USER_AGENT },
+          redirect: 'follow',
+        });
+        if (!response.ok) {
+          throw new Error(`arXiv responded ${response.status} ${response.statusText} for ${url}`);
+        }
+        return new Uint8Array(await response.arrayBuffer());
+      },
+      (bytes) => ({ bytes: bytes.byteLength, items: 1 }),
+    ),
   );
 }
 
 export async function arxivFetchBytes(url: string): Promise<Uint8Array> {
-  const response = await arxivFetch(url);
-  return new Uint8Array(await response.arrayBuffer());
+  return request(url);
 }
 
 export async function arxivFetchText(url: string): Promise<string> {
-  return (await arxivFetch(url)).text();
+  return new TextDecoder().decode(await request(url));
 }
