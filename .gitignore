@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# builds
+.next/
+out/
+build/
+dist/
+
+# env — never commit real values
+.env
+.env.local
+.env*.local
+!.env.example
+
+# vercel / typescript
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# caches and scratch
+.cache/
+coverage/
+tmp/
+.DS_Store
+
+# arXiv source fetched at runtime — never committed, never rehosted
+data/eprints/
