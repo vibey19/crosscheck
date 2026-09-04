@@ -7,9 +7,9 @@ This document has three parts:
 - **Part 2** is the technical brief.
 - **Part 3** is how to start.
 
-If you are an AI assistant reading this: read all three parts before doing anything. Part 2 contains
-design decisions that were researched and verified. Several of them contradict what you would reach
-for by default, and the reasons are given each time. Do not silently substitute familiar alternatives.
+Read all three parts before starting. Part 2 contains design decisions that were researched and
+verified. Several of them contradict the obvious default choice, and the reasons are given each
+time. Do not silently substitute familiar alternatives.
 
 ---
 ---
@@ -287,13 +287,12 @@ No widening the four-type conflict taxonomy. No skipping Phase 3.
 
 # Part 3 — How to start
 
-## Things only the human can do
+## Accounts and credentials to obtain first
 
-You cannot sign me up for services. Stop and give me a short checklist of exactly what to obtain,
-then wait. At minimum:
+These require signing up in a browser and cannot be scripted. Get them before writing any code:
 
 - A **Neon** account and Postgres connection string (neon.com — free, no card). The `vector`
-  extension needs enabling, either by me in the dashboard or by you in the first migration.
+  extension needs enabling, either in the dashboard or in the first migration.
 - A **Gemini API key** from Google AI Studio (aistudio.google.com — free, no card).
 - A **public GitHub repo**, so Actions minutes are free.
 
@@ -302,9 +301,8 @@ before anything real goes into it. No config values hardcoded in source, from th
 
 ## First action: persist the durable constraints
 
-This plan will fall out of an AI assistant's context long before the project is finished — Phase 3 is
-weeks away. So before Phase 0, write a `CLAUDE.md` at the repo root so every future session picks up
-the constraints automatically. It must include:
+Phase 3 is weeks away, and the constraints below are easy to lose track of over that span. So
+before Phase 0, write `docs/constraints.md` so they stay at hand. It must include:
 
 - What Crosscheck is, and that it is **not** a chatbot or RAG Q&A
 - The four-type conflict taxonomy, and that it must not be widened

@@ -14,7 +14,7 @@ export interface IngestedDocument {
   mainTexFile: string;
   parserVersion: string;
   contentHash: string;
-  /** Normalised text. In-memory only for the caller's use — never persisted. See CLAUDE.md. */
+  /** Normalised text. In-memory only for the caller's use — never persisted. See docs/constraints.md. */
   text: string;
   sections: ParsedSection[];
 }

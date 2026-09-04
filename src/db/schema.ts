@@ -10,7 +10,7 @@ import {
  */
 export const EMBEDDING_DIMS = 768;
 
-/** The four objectively checkable conflict types. Do not widen — see CLAUDE.md. */
+/** The four objectively checkable conflict types. Do not widen — see docs/constraints.md. */
 export const CONFLICT_TYPES = ['NUMERIC', 'DIRECTION', 'SCOPE', 'DEFINITIONAL'] as const;
 export type ConflictType = (typeof CONFLICT_TYPES)[number];
 
@@ -41,7 +41,7 @@ export interface Quantity {
  * findings, eval_runs and injections.
  *
  * Note what is deliberately absent: section text. arXiv's terms of use prohibit storing and
- * serving e-prints, so a section records where its text lives, not the text itself. See CLAUDE.md.
+ * serving e-prints, so a section records where its text lives, not the text itself. See docs/constraints.md.
  */
 
 export const documents = pgTable(

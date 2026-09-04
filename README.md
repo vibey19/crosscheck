@@ -91,4 +91,4 @@ what a 429's retry hint implies. Extraction therefore batches many sections into
 memoises per section on content hash; a paper costs about three calls, and re-running one costs
 none. Each model carries its own separate daily allowance.
 
-See `CLAUDE.md` for project constraints and `PLAN.md` for the full brief.
+See `docs/constraints.md` for project constraints and `PLAN.md` for the full brief.

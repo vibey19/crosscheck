@@ -1,7 +1,7 @@
-# Crosscheck — durable constraints
+# Crosscheck — project constraints
 
-A contradiction-finding engine for scientific papers. Full brief: **`PLAN.md`** (read it before
-non-trivial work). This file is the pointer that survives context loss — keep it ~a page.
+A contradiction-finding engine for scientific papers. Full brief: **`PLAN.md`**.
+This file is the short reference for the constraints that govern the build — keep it ~a page.
 
 **Current phase: Phase 1 complete; next is Phase 2 — cross-document detection.** Update as the project moves.
 
@@ -9,6 +9,11 @@ Phase 0: arXiv fetch + LaTeX parse producing a section tree with offsets, persis
 Phase 1: batched claim extraction, pgvector embeddings, deterministic intra-document NUMERIC
 detection. Ship criterion met — it finds the real 41.8-vs-41.0 EN-FR BLEU discrepancy in
 1706.03762 as its only finding for that paper.
+
+**Known: precision does not generalise yet.** The same pipeline returns ~100 findings on
+2203.15556, essentially all false (comparing the Male row against the Female row, different
+BIG-bench tasks, different columns of one table). The 1706.03762 result followed three rounds of
+prompt tuning against that paper. Do not quote a precision number until Phase 3 measures one.
 
 Offsets are in *normalized-text space*, not raw LaTeX. Never store an offset without the
 `parser_version` that produced it.
@@ -53,7 +58,7 @@ Next.js (App Router) + TypeScript · Neon Postgres + pgvector · Drizzle · `gem
 - **Pinecone** — unnecessary once pgvector is in Postgres. One less service to fail.
 - **Stripe / payments / paywalls** — out of scope.
 
-Do not silently swap a stack component. If one is unworkable, say so and ask.
+Do not silently swap a stack component. If one is unworkable, say so and raise it.
 
 ## arXiv terms of use — affects the schema
 
