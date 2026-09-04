@@ -1,8 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { closeDb, getDb } from '../db/client.js';
 import { documents, sections as sectionsTable } from '../db/schema.js';
 import { meter } from '../instrument/meter.js';
 import { ingestDocument, sectionHash, sectionText, type IngestedDocument } from '../ingest/pipeline.js';
+import { parseArxivId } from '../ingest/arxiv/id.js';
 import { extractDocumentClaims, getDocumentId } from '../claims/pipeline.js';
 import { detectIntraDocument, type IntraFinding } from '../detect/intra.js';
 
@@ -11,10 +12,12 @@ const USAGE = `crosscheck — cross-document contradiction engine
 Usage:
   npm run crosscheck -- ingest  <arxiv-id> [--json] [--save] [--preview N]
   npm run crosscheck -- analyze <arxiv-id> [--json] [--no-verifier] [--no-classifier]
+  npm run crosscheck -- detect  <arxiv-id> [--json] [--no-verifier] [--no-classifier]
 
 Commands:
   ingest    Fetch a paper and print its section tree with character offsets
   analyze   Ingest, extract claims, and check the paper against itself
+  detect    Re-run detection over claims already stored, with no extraction
 
 Arguments:
   <arxiv-id>    2301.12345, 2301.12345v2, math/0309136, or an arxiv.org URL
@@ -53,6 +56,21 @@ function printTree(doc: IngestedDocument, previewChars: number): void {
 
 async function save(doc: IngestedDocument): Promise<void> {
   const db = getDb();
+
+  // Sections cascade-delete claims, so replacing them unconditionally would discard a document's
+  // claims on every run — and lose them for good if the extraction that follows then fails. An
+  // unchanged parse of an immutable arXiv version has nothing to rewrite.
+  const [existing] = await db
+    .select({ id: documents.id, contentHash: documents.contentHash, parserVersion: documents.parserVersion })
+    .from(documents)
+    .where(and(eq(documents.arxivId, doc.arxivId), eq(documents.version, doc.version)))
+    .limit(1);
+
+  if (existing && existing.contentHash === doc.contentHash && existing.parserVersion === doc.parserVersion) {
+    process.stdout.write(`${doc.idWithVersion}: sections unchanged, keeping stored claims.\n`);
+    return;
+  }
+
   await db.transaction(async (tx) => {
     // Re-ingesting the same version replaces it, so a parser change can be re-run cleanly.
     const [row] = await tx
@@ -95,6 +113,22 @@ async function save(doc: IngestedDocument): Promise<void> {
   process.stdout.write(`Saved ${doc.sections.length} sections for ${doc.idWithVersion}.\n`);
 }
 
+function printDetectionStats(
+  stats: Awaited<ReturnType<typeof detectIntraDocument>>['stats'],
+  refine: { classify: boolean; verify: boolean },
+): void {
+  const out = process.stdout;
+  out.write(`candidates:  ${stats.candidatePairs} pairs from ${stats.allPairsBaseline.toLocaleString()} possible `);
+  out.write(`(${stats.allPairsBaseline > 0 ? (100 - (stats.candidatePairs / stats.allPairsBaseline) * 100).toFixed(1) : '0'}% filtered out)\n`);
+  out.write(`type filter: ${stats.survivedTypeFilter} survived · ${stats.numericPairsCompared} quantity comparisons\n`);
+  out.write(`arithmetic:  ${stats.arithmeticCandidates} candidate conflicts\n`);
+  if (stats.refine) {
+    const r = stats.refine;
+    out.write(`stage 5:     ${refine.classify ? `${r.classifierCalls} calls · ${r.rejectedDifferentSubject} different subject · ${r.rejectedNotContradiction} not a contradiction` : 'DISABLED'}\n`);
+    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended` : 'DISABLED'}\n`);
+  }
+}
+
 function printFindings(results: IntraFinding[], url: string): void {
   const out = process.stdout;
   if (results.length === 0) {
@@ -114,6 +148,43 @@ function printFindings(results: IntraFinding[], url: string): void {
     }
     out.write(`   ${url}\n`);
   }
+}
+
+/**
+ * Detection over already-stored claims.
+ *
+ * Extraction is cached per model, so re-running `analyze` under a different model re-pays the whole
+ * extraction cost. Detection does not need it: the claims are in the database already. Keeping the
+ * two separable is what makes an ablation affordable under a 20-request daily cap.
+ */
+async function detect(
+  arxivId: string,
+  asJson: boolean,
+  refine: { classify: boolean; verify: boolean },
+): Promise<void> {
+  const { id: parsedId } = parseArxivId(arxivId);
+  const documentId = await getDocumentId(parsedId);
+  if (!documentId) {
+    throw new Error(`${parsedId} has no stored claims. Run: analyze ${parsedId}`);
+  }
+
+  const { stats, results } = await detectIntraDocument(documentId, refine);
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ arxivId: parsedId, detection: stats, ablation: refine,
+      findings: results.map((f) => ({
+        confidence: f.confidence, rationale: f.rationale,
+        values: [f.conflict.a.value, f.conflict.b.value], unit: f.conflict.a.unit,
+        spans: [
+          { section: f.a.sectionPath, charStart: f.a.charStart, charEnd: f.a.charEnd, text: f.a.text },
+          { section: f.b.sectionPath, charStart: f.b.charStart, charEnd: f.b.charEnd, text: f.b.text },
+        ],
+      })), usage: meter.snapshot() }, null, 2)}\n`);
+    return;
+  }
+
+  printDetectionStats(stats, refine);
+  printFindings(results, `https://arxiv.org/abs/${parsedId}`);
 }
 
 async function analyze(
@@ -159,15 +230,7 @@ async function analyze(
   out.write(`(${extraction.sectionsFromCache} cached, ${extraction.llmCalls} LLM calls)\n`);
   out.write(`spans:       ${extraction.spansResolved}/${extraction.claims} located verbatim\n`);
   out.write(`types:       ${Object.entries(extraction.byType).map(([k, v]) => `${k} ${v}`).join(' · ')}\n`);
-  out.write(`candidates:  ${stats.candidatePairs} pairs from ${stats.allPairsBaseline.toLocaleString()} possible `);
-  out.write(`(${stats.allPairsBaseline > 0 ? (100 - (stats.candidatePairs / stats.allPairsBaseline) * 100).toFixed(1) : '0'}% filtered out)\n`);
-  out.write(`type filter: ${stats.survivedTypeFilter} survived · ${stats.numericPairsCompared} quantity comparisons\n`);
-  out.write(`arithmetic:  ${stats.arithmeticCandidates} candidate conflicts\n`);
-  if (stats.refine) {
-    const r = stats.refine;
-    out.write(`stage 5:     ${refine.classify ? `${r.classifierCalls} calls · ${r.rejectedDifferentSubject} different subject · ${r.rejectedNotContradiction} not a contradiction` : 'DISABLED'}\n`);
-    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended` : 'DISABLED'}\n`);
-  }
+  printDetectionStats(stats, refine);
 
   printFindings(results, doc.url);
 
@@ -180,6 +243,14 @@ async function analyze(
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const [command, ...rest] = argv;
+
+  if (command === 'detect' && rest.length > 0 && !rest[0]?.startsWith('-')) {
+    await detect(rest[0]!, rest.includes('--json'), {
+      classify: !rest.includes('--no-classifier'),
+      verify: !rest.includes('--no-verifier'),
+    });
+    return;
+  }
 
   if (command === 'analyze' && rest.length > 0 && !rest[0]?.startsWith('-')) {
     await analyze(rest[0]!, rest.includes('--json'), {
