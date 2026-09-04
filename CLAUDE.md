@@ -5,6 +5,9 @@ non-trivial work). This file is the pointer that survives context loss — keep 
 
 **Current phase: Phase 0 — skeleton and ingest.** Update this line as the project moves.
 
+Offsets are in *normalized-text space*, not raw LaTeX. Never store an offset without the
+`parser_version` that produced it.
+
 ## What this is
 
 Given a set of related arXiv preprints: extract atomic claims, cross-index them, find claims that
@@ -49,6 +52,20 @@ Do not silently swap a stack component. If one is unworkable, say so and ask.
   without the copyright holder's permission. We store extracted claims and character offsets only.
 - **Always link back to arXiv** for the document itself.
 - **One request per three seconds**, single connection. Not the S3 bulk buckets — requester-pays.
+
+### Decided 2026-09-04 — `sections.raw_text` is dropped
+
+PLAN.md's starting schema lists `sections.raw_text`, which contradicts the ToU promise above.
+Resolved (schema is explicitly "a starting point, not a mandate"):
+
+- `sections` stores structure, char offsets and a content hash — **never** persisted full text.
+- `claims` store their own short quoted span, attributed and linked back. That is what the report needs.
+- Full e-print text exists only in a gitignored, TTL'd local cache during a pipeline run. Never served.
+- The dual-pane view re-fetches from arXiv on demand and highlights using the stored offsets.
+
+This is sound because `documents` pins `arxiv_id` + `version`, and an arXiv version is immutable — so
+offsets stay reproducible without us holding the text. `documents.parser_version` invalidates rows
+loudly if the parser changes, rather than corrupting offsets silently.
 
 ## Non-negotiable practices
 
