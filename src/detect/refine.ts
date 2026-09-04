@@ -14,6 +14,19 @@ export interface RefineOptions {
   classify: boolean;
   /** Stage 6. Off means no finding is dropped for failing to be defended. */
   verify: boolean;
+  /**
+   * Set when the conflict itself was already established deterministically, as the NUMERIC
+   * arithmetic check does. Stage 5 is then consulted only for `sameSubject` and its verdict label
+   * is ignored.
+   *
+   * Measured reason: the verdict is unstable where the deterministic check is not. Given the same
+   * pair and prompt, gemini-3.7-flash returned CONTRADICTS (0.95) and gemini-3.6-flash returned
+   * TENSION (0.85) with materially the same rationale — "41.0 versus 41.8". `sameSubject`, by
+   * contrast, was right every time: it rejected all 116 false positives on 2203.15556 and accepted
+   * the true one on 1706.03762. Asking a model to re-derive arithmetic it cannot do better than
+   * arithmetic costs recall and buys nothing.
+   */
+  deterministicConflict?: boolean;
 }
 
 export interface RefinableFinding {
@@ -84,9 +97,17 @@ export async function refineFindings<T extends RefinableFinding>(
       continue;
     }
     const classification = classifications.get(index);
-    if (!classification || classification.verdict !== 'CONTRADICTS') {
-      if (classification && !classification.sameSubject) stats.rejectedDifferentSubject += 1;
-      else stats.rejectedNotContradiction += 1;
+    if (!classification) {
+      stats.rejectedNotContradiction += 1;
+      continue;
+    }
+    if (!classification.sameSubject) {
+      stats.rejectedDifferentSubject += 1;
+      continue;
+    }
+    // Where the conflict is already proven, same-subject is the only question stage 5 answers.
+    if (!options.deterministicConflict && classification.verdict !== 'CONTRADICTS') {
+      stats.rejectedNotContradiction += 1;
       continue;
     }
     surviving.push(index);

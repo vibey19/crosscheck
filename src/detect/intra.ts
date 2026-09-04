@@ -184,7 +184,12 @@ export async function detectIntraDocument(
   }
 
   // Stages 5 and 6. Everything above this line is deterministic.
-  const { results: refined, stats: refineStats } = await refineFindings(arithmeticFindings, options);
+  // These candidates come from the deterministic arithmetic check, so stage 5 judges subject
+  // sameness only.
+  const { results: refined, stats: refineStats } = await refineFindings(arithmeticFindings, {
+    ...options,
+    deterministicConflict: true,
+  });
   const results = refined.filter((row) => row.reported).map((row) => row.finding);
 
   // Replace prior results for this document so re-running is idempotent.

@@ -10,10 +10,20 @@ Phase 1: batched claim extraction, pgvector embeddings, deterministic intra-docu
 detection. Ship criterion met — it finds the real 41.8-vs-41.0 EN-FR BLEU discrepancy in
 1706.03762 as its only finding for that paper.
 
-**Known: precision does not generalise yet.** The same pipeline returns ~100 findings on
+**Stage 5 is asked for subject-sameness, not for a verdict, on deterministic conflicts.**
+Measured 2026-09-04: the same claim pair, same prompt, returned CONTRADICTS (0.95) from
+gemini-3.7-flash and TENSION (0.85) from gemini-3.6-flash, with materially identical rationales.
+The verdict label is model-unstable; `sameSubject` was correct in every case observed — it rejected
+all 116 false positives on 2203.15556 and accepted the true positive on 1706.03762. Where the
+arithmetic check already proves incompatibility, `refineFindings` is called with
+`deterministicConflict: true` so only `sameSubject` gates the finding. Reverting that trades all
+recall for no precision gain.
+
+**Known: precision does not generalise yet.** The deterministic stage alone returns 116 findings on
 2203.15556, essentially all false (comparing the Male row against the Female row, different
-BIG-bench tasks, different columns of one table). The 1706.03762 result followed three rounds of
-prompt tuning against that paper. Do not quote a precision number until Phase 3 measures one.
+BIG-bench tasks, different columns of one table). Stage 5 removes all 116 while keeping the one
+true finding on 1706.03762 — but that is two papers judged by eye, not a measurement. Stage 6 is
+built and unmeasured. Do not quote a precision number until Phase 3 produces one.
 
 Offsets are in *normalized-text space*, not raw LaTeX. Never store an offset without the
 `parser_version` that produced it.
