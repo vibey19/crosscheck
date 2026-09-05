@@ -117,6 +117,10 @@ loudly if the parser changes, rather than corrupting offsets silently.
   all along while generate quota took the blame. Batching *against* a per-item quota is
   counterproductive: pacing must count texts (`ItemRateLimiter`), and vectors are cached in
   `embedding_cache` keyed on the exact text embedded, so re-analysis costs nothing.
+- **Never delete stored state before its replacement is in hand.** This has now bitten twice: once
+  where re-ingest deleted sections (cascading to claims) before extraction succeeded, and once where
+  claim replacement deleted before embedding succeeded, so a quota rejection wiped an already
+  extracted paper. Compute first, swap in a transaction.
 - **Separate ingest from detection.** `analyze` re-extracts; `detect` and `corpus` run over stored
   claims for zero extraction cost. Extraction caches per model, so switching model re-pays it in
   full — that, not detection, is what burns a daily allowance.

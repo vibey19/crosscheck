@@ -35,6 +35,9 @@ export interface ExtractionStats {
  */
 const EMBED_BATCH = 40;
 
+/** Claims per insert statement. Postgres parameter limits, not quota. */
+const INSERT_BATCH = 100;
+
 /**
  * The text an embedding is computed over.
  *
@@ -114,9 +117,10 @@ export async function extractDocumentClaims(
     }
   }
 
-  // Re-running replaces prior claims rather than accumulating duplicates.
-  await db.delete(claimsTable).where(eq(claimsTable.documentId, documentRow.id));
-  if (pending.length === 0) return stats;
+  if (pending.length === 0) {
+    await db.delete(claimsTable).where(eq(claimsTable.documentId, documentRow.id));
+    return stats;
+  }
 
   const { GEMINI_EMBEDDING_MODEL } = getConfig();
   // Key on the exact text embedded, which includes the subject line.
@@ -153,24 +157,29 @@ export async function extractDocumentClaims(
   stats.embeddingsComputed = needed.length;
   stats.embeddingsReused = new Set(keys.values()).size - needed.length;
 
-  for (let start = 0; start < pending.length; start += EMBED_BATCH) {
-    const batch = pending.slice(start, start + EMBED_BATCH);
-    await db.insert(claimsTable).values(
-      batch.map(({ sectionId, claim }, offset) => ({
-        documentId: documentRow.id,
-        sectionId,
-        text: claim.text,
-        charStart: claim.charStart,
-        charEnd: claim.charEnd,
-        spanResolved: claim.spanResolved,
-        claimType: claim.claimType,
-        subject: claim.subject,
-        quantities: claim.quantities,
-        embedding: vectorByKey.get(keys.get(start + offset)!)!,
-        contentHash: claim.contentHash,
-      })),
-    );
-  }
+  const rows = pending.map(({ sectionId, claim }, index) => ({
+    documentId: documentRow.id,
+    sectionId,
+    text: claim.text,
+    charStart: claim.charStart,
+    charEnd: claim.charEnd,
+    spanResolved: claim.spanResolved,
+    claimType: claim.claimType,
+    subject: claim.subject,
+    quantities: claim.quantities,
+    embedding: vectorByKey.get(keys.get(index)!)!,
+    contentHash: claim.contentHash,
+  }));
+
+  // Swap only once every vector is in hand. Deleting first and embedding afterwards loses the
+  // document's claims outright when the embedding quota rejects the batch — which is exactly how a
+  // previously extracted paper ended up with none.
+  await db.transaction(async (tx) => {
+    await tx.delete(claimsTable).where(eq(claimsTable.documentId, documentRow.id));
+    for (let start = 0; start < rows.length; start += INSERT_BATCH) {
+      await tx.insert(claimsTable).values(rows.slice(start, start + INSERT_BATCH));
+    }
+  });
 
   return stats;
 }
