@@ -14,7 +14,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
-    "backfill:embeddings": "tsx src/db/backfill.ts"
+    "backfill:embeddings": "tsx src/db/backfill.ts",
+    "eval:write-results": "tsx src/eval/write-results.ts"
   },
   "dependencies": {
     "@unified-latex/unified-latex-util-parse": "^1.8.4",

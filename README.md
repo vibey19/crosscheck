@@ -8,16 +8,35 @@ and renders a report where each finding quotes the exact span from both sources.
 
 It is not a chatbot and not RAG question-answering. The output is a structured report.
 
+## Results
+
+Everything below is written by the benchmark harness from a recorded run. No number here is
+hand-entered, and anything not measured says so.
+
+<!-- BENCHMARK:START -->
+
+_No benchmark run has been recorded yet._
+
+<!-- BENCHMARK:END -->
+
+**How the labels are made.** A clean paper states some figure twice — in its abstract and again in a
+results table, say. The harness changes one mention beyond any rounding tolerance and records
+exactly which characters it altered. That produces a document known to contain exactly one
+contradiction, at a known offset, so a detection is scored by comparing character spans rather than
+by asking a model whether it found the right thing.
+
+Sites are chosen from the surface text alone. Selecting them with the detector's own notion of
+"the same measurement" would only inject where the detector can already match, and the resulting
+recall figure would be circular.
+
 ## Status
 
-**Phase 1 of 4 — claims and self-consistency.** Cross-document detection is not built yet.
-
-The results table this README will eventually lead with does not exist, because the benchmark that
-produces it has not been built. It will not be filled in with anything the harness did not measure.
+**Phases 0-2 built; Phase 3 (the benchmark) in progress.** No interface yet.
 
 What works today: fetch an arXiv paper, parse its LaTeX source into a section tree with character
-offsets, extract atomic claims with structured measurement labels, embed them into pgvector, and
-detect numeric self-inconsistencies within the paper.
+offsets, extract atomic claims with structured measurement labels, embed them into pgvector, detect
+numeric contradictions within a paper and across a corpus, and filter them through an entailment
+classifier and an adversarial verifier.
 
 On *Attention Is All You Need*, it reports one finding: Table 2 gives 41.8 BLEU for the big model
 on WMT14 EN-FR, while the prose below it says 41.0.

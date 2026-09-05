@@ -22,9 +22,12 @@ export interface ExtractionStats {
   claims: number;
   spansResolved: number;
   byType: Record<string, number>;
-  /** Vectors reused from the cache rather than re-embedded. */
-  embeddingsReused: number;
+  /** Vectors served from the durable cache — the figure that reflects quota actually saved. */
+  embeddingsFromCache: number;
+  /** Distinct texts embedded this run. */
   embeddingsComputed: number;
+  /** Claims sharing an identical embedding text within this document, so embedded once. */
+  embeddingsDeduplicated: number;
 }
 
 /**
@@ -101,8 +104,9 @@ export async function extractDocumentClaims(
     claims: 0,
     spansResolved: 0,
     byType: {},
-    embeddingsReused: 0,
+    embeddingsFromCache: 0,
     embeddingsComputed: 0,
+    embeddingsDeduplicated: 0,
   };
 
   const pending: { sectionId: string; claim: LocatedClaim }[] = [];
@@ -154,8 +158,12 @@ export async function extractDocumentClaims(
     }
   }
 
+  // Three distinct things, previously conflated into one misleading "reused" figure: cache hits
+  // save quota, in-document duplicates never cost any, and computed texts are what was spent.
+  const distinct = new Set(keys.values()).size;
   stats.embeddingsComputed = needed.length;
-  stats.embeddingsReused = new Set(keys.values()).size - needed.length;
+  stats.embeddingsFromCache = distinct - needed.length;
+  stats.embeddingsDeduplicated = pending.length - distinct;
 
   const rows = pending.map(({ sectionId, claim }, index) => ({
     documentId: documentRow.id,
