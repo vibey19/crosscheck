@@ -36,6 +36,13 @@
       "when": 1788589054157,
       "tag": "0004_flat_network",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788590215767,
+      "tag": "0005_brave_speedball",
+      "breakpoints": true
     }
   ]
 }

@@ -81,6 +81,9 @@ async function generateCrossCandidates(arxivIds: string[]) {
       from claims c
       join documents d on d.id = c.document_id
       where d.arxiv_id = any(${sql.raw(`ARRAY[${arxivIds.map((id) => `'${id}'`).join(',')}]`)})
+        -- Eval variants share an arxiv_id with the paper they were built from; a mutated document
+        -- must never appear in a report.
+        and d.eval_run_id is null
         and c.embedding is not null
     ),
     neighbours as (
@@ -135,6 +138,7 @@ async function corpusSize(arxivIds: string[]): Promise<{ documents: number; clai
     from documents d
     join claims c on c.document_id = d.id and c.embedding is not null
     where d.arxiv_id = any(${sql.raw(`ARRAY[${arxivIds.map((id) => `'${id}'`).join(',')}]`)})
+      and d.eval_run_id is null
   `);
   const row = result.rows[0] as { documents: number; claims: number } | undefined;
   return { documents: Number(row?.documents ?? 0), claims: Number(row?.claims ?? 0) };

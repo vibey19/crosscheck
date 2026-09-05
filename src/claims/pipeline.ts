@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { getConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import {
@@ -49,15 +49,25 @@ function embeddingText(claim: LocatedClaim): string {
  * Extracts, embeds and stores every claim in a document.
  *
  * Assumes the document and its sections are already persisted, which `ingest --save` does.
+ *
+ * `documentId` is passed explicitly by the eval harness: a mutated variant shares its arXiv id with
+ * the paper it came from, and lookup by identifier deliberately excludes variants.
  */
-export async function extractDocumentClaims(doc: IngestedDocument): Promise<ExtractionStats> {
+export async function extractDocumentClaims(
+  doc: IngestedDocument,
+  documentId?: string,
+): Promise<ExtractionStats> {
   const db = getDb();
 
-  const [documentRow] = await db
-    .select({ id: documents.id })
-    .from(documents)
-    .where(eq(documents.arxivId, doc.arxivId))
-    .limit(1);
+  const documentRow = documentId
+    ? { id: documentId }
+    : (
+        await db
+          .select({ id: documents.id })
+          .from(documents)
+          .where(and(eq(documents.arxivId, doc.arxivId), isNull(documents.evalRunId)))
+          .limit(1)
+      )[0];
   if (!documentRow) throw new Error(`${doc.idWithVersion} is not saved; run ingest --save first.`);
 
   const sectionRows = await db
@@ -165,11 +175,12 @@ export async function extractDocumentClaims(doc: IngestedDocument): Promise<Extr
   return stats;
 }
 
+/** Resolves a real paper, never an eval variant that happens to share its identifier. */
 export async function getDocumentId(arxivId: string): Promise<string | undefined> {
   const [row] = await getDb()
     .select({ id: documents.id })
     .from(documents)
-    .where(eq(documents.arxivId, arxivId))
+    .where(and(eq(documents.arxivId, arxivId), isNull(documents.evalRunId)))
     .limit(1);
   return row?.id;
 }

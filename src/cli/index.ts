@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { closeDb, getDb } from '../db/client.js';
 import { documents, sections as sectionsTable } from '../db/schema.js';
 import { meter } from '../instrument/meter.js';
@@ -7,6 +7,7 @@ import { parseArxivId } from '../ingest/arxiv/id.js';
 import { extractDocumentClaims, getDocumentId } from '../claims/pipeline.js';
 import { detectIntraDocument, type IntraFinding } from '../detect/intra.js';
 import { detectCrossDocument } from '../detect/cross.js';
+import { runEvaluation } from '../eval/run.js';
 
 const USAGE = `crosscheck — cross-document contradiction engine
 
@@ -15,12 +16,15 @@ Usage:
   npm run crosscheck -- analyze <arxiv-id> [--json] [--no-verifier] [--no-classifier]
   npm run crosscheck -- detect  <arxiv-id> [--json] [--no-verifier] [--no-classifier]
   npm run crosscheck -- corpus  <id> <id> [<id>...] [--json] [--no-verifier] [--no-classifier]
+  npm run crosscheck -- eval    <id> [<id>...] [--per-paper N] [--seed N] [--control-only]
+                                [--json] [--no-verifier] [--no-classifier]
 
 Commands:
   ingest    Fetch a paper and print its section tree with character offsets
   analyze   Ingest, extract claims, and check the paper against itself
   detect    Re-run detection over claims already stored, with no extraction
   corpus    Find contradictions ACROSS several already-analyzed papers
+  eval      Inject known contradictions and measure recall and false positives
 
 Arguments:
   <arxiv-id>    2301.12345, 2301.12345v2, math/0309136, or an arxiv.org URL
@@ -66,7 +70,11 @@ async function save(doc: IngestedDocument): Promise<void> {
   const [existing] = await db
     .select({ id: documents.id, contentHash: documents.contentHash, parserVersion: documents.parserVersion })
     .from(documents)
-    .where(and(eq(documents.arxivId, doc.arxivId), eq(documents.version, doc.version)))
+    .where(and(
+      eq(documents.arxivId, doc.arxivId),
+      eq(documents.version, doc.version),
+      isNull(documents.evalRunId),
+    ))
     .limit(1);
 
   if (existing && existing.contentHash === doc.contentHash && existing.parserVersion === doc.parserVersion) {
@@ -318,9 +326,54 @@ async function corpus(
   }
 }
 
+function numericFlag(args: string[], flag: string, fallback: number): number {
+  const index = args.indexOf(flag);
+  if (index < 0) return fallback;
+  const value = Number(args[index + 1]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+async function evaluate(args: string[]): Promise<void> {
+  const ids = args.filter((arg, i) => !arg.startsWith('-') && !['--per-paper', '--seed'].includes(args[i - 1] ?? ''));
+  if (ids.length === 0) {
+    process.stdout.write(USAGE);
+    process.exitCode = 1;
+    return;
+  }
+
+  const { runId, metrics } = await runEvaluation({
+    arxivIds: ids.map((raw) => parseArxivId(raw).id),
+    perPaper: numericFlag(args, '--per-paper', 3),
+    seed: numericFlag(args, '--seed', 42),
+    classify: !args.includes('--no-classifier'),
+    verify: !args.includes('--no-verifier'),
+    controlOnly: args.includes('--control-only'),
+  });
+
+  if (args.includes('--json')) {
+    process.stdout.write(`${JSON.stringify({ runId, metrics, usage: meter.snapshot() }, null, 2)}\n`);
+    return;
+  }
+
+  const out = process.stdout;
+  const { injected, control, cost } = metrics;
+  out.write(`\neval run ${runId}\n\n`);
+  out.write(`injected:  ${injected.detected}/${injected.total} detected`);
+  out.write(injected.recall === null ? ' (none run)\n' : `  — recall ${(injected.recall * 100).toFixed(1)}%\n`);
+  out.write(`control:   ${control.findings} findings over ${control.papers} clean paper(s)`);
+  out.write(control.falsePositivesPerPaper === null ? '\n' : `  — ${control.falsePositivesPerPaper.toFixed(2)} false positives per paper\n`);
+  out.write(`cost:      ${cost.generateCalls} generate calls · ${cost.embedCalls} embed calls · `);
+  out.write(`${(cost.inputTokens + cost.outputTokens).toLocaleString()} tokens\n`);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const [command, ...rest] = argv;
+
+  if (command === 'eval') {
+    await evaluate(rest);
+    return;
+  }
 
   if (command === 'corpus') {
     const ids = rest.filter((arg) => !arg.startsWith('-'));

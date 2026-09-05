@@ -59,8 +59,16 @@ export const documents = pgTable(
     /** Length of the normalised text; cheap sanity check against a re-parse. */
     textLength: integer('text_length').notNull(),
     fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Set when this row is a mutated variant built by the eval harness rather than a real paper.
+     * Variants must never leak into a corpus report, so every user-facing query filters on it.
+     */
+    evalRunId: uuid('eval_run_id'),
   },
-  (table) => [uniqueIndex('documents_arxiv_id_version_idx').on(table.arxivId, table.version)],
+  (table) => [
+    uniqueIndex('documents_arxiv_id_version_idx').on(table.arxivId, table.version),
+    index('documents_eval_run_idx').on(table.evalRunId),
+  ],
 );
 
 export const sections = pgTable(
@@ -272,3 +280,55 @@ export type Claim = typeof claims.$inferSelect;
 export type NewClaim = typeof claims.$inferInsert;
 export type CandidatePair = typeof candidatePairs.$inferSelect;
 export type Finding = typeof findings.$inferSelect;
+
+
+/** One benchmark execution, with the configuration that produced its numbers. */
+export const evalRuns = pgTable('eval_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  /** Seed, corpus, batch sizes — everything needed to reproduce the run. */
+  config: jsonb('config').notNull(),
+  metrics: jsonb('metrics'),
+  /** The ablation switches, recorded rather than inferred from the metrics. */
+  classifierEnabled: boolean('classifier_enabled').notNull(),
+  verifierEnabled: boolean('verifier_enabled').notNull(),
+  model: text('model').notNull(),
+  notes: text('notes'),
+});
+
+/**
+ * One injected mutation and whether the pipeline caught it.
+ *
+ * `detected` is the recall numerator. It is set by checking a reported finding's spans against the
+ * mutation's known offsets, never by asking a model whether it found the right thing.
+ */
+export const injections = pgTable(
+  'injections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull().references(() => evalRuns.id, { onDelete: 'cascade' }),
+    sourceArxivId: text('source_arxiv_id').notNull(),
+    /** The mutated variant document, when one was materialised. */
+    documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
+    mutationType: text('mutation_type').notNull(),
+    charStart: integer('char_start').notNull(),
+    charEnd: integer('char_end').notNull(),
+    originalText: text('original_text').notNull(),
+    mutatedText: text('mutated_text').notNull(),
+    counterpartStart: integer('counterpart_start').notNull(),
+    counterpartEnd: integer('counterpart_end').notNull(),
+    sectionPath: text('section_path').notNull(),
+    detected: boolean('detected'),
+    /** The finding that matched, kept so a hit or miss can be inspected afterwards. */
+    matchedFinding: jsonb('matched_finding'),
+    note: text('note').notNull(),
+  },
+  (table) => [
+    index('injections_run_idx').on(table.runId),
+    index('injections_type_idx').on(table.mutationType),
+  ],
+);
+
+export type EvalRun = typeof evalRuns.$inferSelect;
+export type Injection = typeof injections.$inferSelect;
