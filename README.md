@@ -15,9 +15,52 @@ hand-entered, and anything not measured says so.
 
 <!-- BENCHMARK:START -->
 
-_No benchmark run has been recorded yet._
+### Preliminary results
+
+Measured 2026-09-05 on `gemini-3.1-flash-lite`, run `15538e3f`.
+
+| Metric | Value |
+|---|---|
+| Injected contradictions | 6 |
+| Detected | 1 |
+| **Recall** | **16.7%** |
+| Clean control papers | 3 |
+| Findings on clean papers (all false by construction) | 0 |
+| **False positives per clean paper** | **0.00** |
+| Stage 5 (entailment) | enabled |
+| Stage 6 (adversarial verifier) | enabled |
+| LLM generate calls | 30 |
+| Tokens | 183,137 |
+
+| Conflict type | Injected | Detected | Recall |
+|---|---|---|---|
+| `NUMERIC` | 6 | 1 | 16.7% |
 
 <!-- BENCHMARK:END -->
+
+### Where it fails
+
+The recall figure is bad, and it is the honest one. Six injections is far too few to estimate from,
+but 1-in-6 is not a rounding artefact — the pipeline misses most contradictions it is handed, and
+earlier informal results on hand-picked examples were considerably more flattering than this.
+
+Known limitations, in rough order of how much they matter:
+
+- **Only `NUMERIC` is implemented.** `DIRECTION`, `SCOPE` and `DEFINITIONAL` have no detector at
+  all, so the taxonomy is declared but only a quarter of it is built. The per-type table below will
+  stay single-row until they exist.
+- **Misses are not yet attributed.** A miss can happen at four separate stages — the claim was never
+  extracted, the two claims were never paired, the measurement labels disagreed, or the values were
+  judged compatible — and the harness currently records only that it happened. Without that
+  breakdown the recall number says nothing actionable about what to fix.
+- **The corpus is three papers.** Both figures come from a sample small enough that a single
+  additional paper could move them substantially.
+- **The false-positive rate is measured on clean papers only.** 0.00 per paper is the number stages
+  5 and 6 were built to move, and it is doing its job — but on this corpus the deterministic stage
+  alone produced 116 candidates on one paper, so the reported figure depends entirely on those
+  stages continuing to hold on unseen papers.
+- **No ablation is recorded here.** The verifier on/off comparison PLAN.md calls the headline result
+  needs a second run and is not yet in this table.
 
 **How the labels are made.** A clean paper states some figure twice — in its abstract and again in a
 results table, say. The harness changes one mention beyond any rounding tolerance and records
