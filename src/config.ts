@@ -23,7 +23,11 @@ const schema = z.object({
    * Default sits under it, because the quota is shared with anything else using the key.
    */
   GEMINI_MAX_RPM: z.coerce.number().int().positive().default(15),
-  GEMINI_EMBED_MAX_RPM: z.coerce.number().int().positive().default(60),
+  /**
+   * The embedding quota counts embedded texts per minute, not requests — measured limit 100.
+   * Default leaves headroom, since a rejected batch still costs the daily allowance.
+   */
+  GEMINI_EMBED_MAX_TEXTS_PER_MIN: z.coerce.number().int().positive().default(85),
 
   ARXIV_USER_AGENT: z.string().min(1),
   // arXiv's terms of use set the floor at one request per three seconds.

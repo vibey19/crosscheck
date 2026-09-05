@@ -27,8 +27,13 @@ export interface ExtractionStats {
   embeddingsComputed: number;
 }
 
-/** Embedding requests per batch. Kept modest so one rejected batch costs little to retry. */
-const EMBED_BATCH = 64;
+/**
+ * Texts per embedding request.
+ *
+ * Bounded by the per-minute TEXT quota rather than a request count, so a bigger batch buys nothing
+ * and a rejected one still spends the daily allowance.
+ */
+const EMBED_BATCH = 40;
 
 /**
  * The text an embedding is computed over.

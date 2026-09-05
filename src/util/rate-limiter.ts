@@ -31,3 +31,40 @@ export class RateLimiter {
     return scheduled;
   }
 }
+
+
+/**
+ * Paces work measured in items rather than calls, over a rolling window.
+ *
+ * The embedding quota counts embedded TEXTS, not requests: a limiter spacing calls at 60/minute
+ * happily sends 64 texts per call and lands ~3,840/minute against a 100/minute ceiling. Batching
+ * to save requests actively works against a per-item quota unless the pacing knows the batch size.
+ */
+export class ItemRateLimiter {
+  private readonly events: { at: number; items: number }[] = [];
+  private tail: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly maxItemsPerWindow: number, private readonly windowMs = 60_000) {}
+
+  private itemsInWindow(now: number): number {
+    while (this.events.length > 0 && now - this.events[0]!.at > this.windowMs) this.events.shift();
+    return this.events.reduce((total, event) => total + event.items, 0);
+  }
+
+  /** Queues `fn`, waiting until `items` more fit inside the window. */
+  run<T>(items: number, fn: () => Promise<T>): Promise<T> {
+    const scheduled = this.tail.then(async () => {
+      for (;;) {
+        const now = Date.now();
+        if (this.itemsInWindow(now) + items <= this.maxItemsPerWindow) break;
+        const oldest = this.events[0];
+        if (!oldest) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(250, oldest.at + this.windowMs - now)));
+      }
+      this.events.push({ at: Date.now(), items });
+      return fn();
+    });
+    this.tail = scheduled.catch(() => undefined);
+    return scheduled;
+  }
+}

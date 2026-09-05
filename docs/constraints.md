@@ -111,6 +111,12 @@ loudly if the parser changes, rather than corrupting offsets silently.
   went to 429 in lockstep with `gemini-3.8-flash`. Working pools observed 2026-09-05:
   gemini-3.5-flash, gemini-3.7-flash, gemini-3.1-flash-lite. Probe before planning a run — a 429
   costs no quota, so probing is free.
+- **Embeddings are quota'd per TEXT, not per request, and have two ceilings**: 100 texts/minute and
+  1000 texts/day (`embed_content_free_tier_requests`, reported with both limits at different times).
+  The daily one is shared across models, so switching model does not help — it was the real ceiling
+  all along while generate quota took the blame. Batching *against* a per-item quota is
+  counterproductive: pacing must count texts (`ItemRateLimiter`), and vectors are cached in
+  `embedding_cache` keyed on the exact text embedded, so re-analysis costs nothing.
 - **Separate ingest from detection.** `analyze` re-extracts; `detect` and `corpus` run over stored
   claims for zero extraction cost. Extraction caches per model, so switching model re-pays it in
   full — that, not detection, is what burns a daily allowance.

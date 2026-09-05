@@ -1,6 +1,6 @@
 import { getConfig } from '../config.js';
 import { meter } from '../instrument/meter.js';
-import { RateLimiter } from '../util/rate-limiter.js';
+import { ItemRateLimiter, RateLimiter } from '../util/rate-limiter.js';
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -32,13 +32,17 @@ function sleep(ms: number): Promise<void> {
 
 /** Generation and embedding draw on separate quotas, so they queue separately. */
 let generateLimiter: RateLimiter | undefined;
-let embedLimiter: RateLimiter | undefined;
+let embedLimiter: ItemRateLimiter | undefined;
 
-function limiters(): { generate: RateLimiter; embed: RateLimiter } {
-  const { GEMINI_MAX_RPM, GEMINI_EMBED_MAX_RPM } = getConfig();
-  generateLimiter ??= new RateLimiter(Math.ceil(60_000 / GEMINI_MAX_RPM));
-  embedLimiter ??= new RateLimiter(Math.ceil(60_000 / GEMINI_EMBED_MAX_RPM));
-  return { generate: generateLimiter, embed: embedLimiter };
+function generateQueue(): RateLimiter {
+  generateLimiter ??= new RateLimiter(Math.ceil(60_000 / getConfig().GEMINI_MAX_RPM));
+  return generateLimiter;
+}
+
+/** Paced by texts, because that is the unit the embedding quota counts. */
+function embedQueue(): ItemRateLimiter {
+  embedLimiter ??= new ItemRateLimiter(getConfig().GEMINI_EMBED_MAX_TEXTS_PER_MIN);
+  return embedLimiter;
 }
 
 /**
@@ -54,12 +58,13 @@ function retryDelayMs(error: unknown): number | undefined {
 
 async function withRetry<T>(
   label: string,
-  limiter: RateLimiter,
+  schedule: (fn: () => Promise<Response>) => Promise<Response>,
+  onBackOff: (ms: number) => void,
   fn: () => Promise<Response>,
 ): Promise<{ body: T; status: number }> {
   let lastError = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const response = await limiter.run(fn);
+    const response = await schedule(fn);
     const body = (await response.json()) as T & { error?: { code: number; message: string } };
 
     if (response.ok) return { body, status: response.status };
@@ -72,7 +77,7 @@ async function withRetry<T>(
     const hinted = retryDelayMs(body.error);
     const delay = hinted ?? Math.min(2 ** attempt * 1000, 32_000) * (0.5 + Math.random() / 2);
     // Hold the whole queue back, not just this call, or the next one lands straight into the cap.
-    limiter.backOff(delay);
+    onBackOff(delay);
     await sleep(delay);
   }
   throw new Error(`Gemini ${label} failed: ${lastError}`);
@@ -100,7 +105,11 @@ export async function generateStructured<T>(
     'llm.generate',
     GEMINI_MODEL,
     async () => {
-      const { body } = await withRetry<GenerateResponse>(`generateContent(${GEMINI_MODEL})`, limiters().generate, () =>
+      const { body } = await withRetry<GenerateResponse>(
+        `generateContent(${GEMINI_MODEL})`,
+        (call) => generateQueue().run(call),
+        (ms) => generateQueue().backOff(ms),
+        () =>
         fetch(`${BASE}/${GEMINI_MODEL}:generateContent`, {
           method: 'POST',
           headers: { 'x-goog-api-key': GEMINI_API_KEY, 'content-type': 'application/json' },
@@ -161,7 +170,11 @@ export async function embedTexts(
     'llm.embed',
     GEMINI_EMBEDDING_MODEL,
     async () => {
-      const { body } = await withRetry<EmbedResponse>(`batchEmbedContents(${GEMINI_EMBEDDING_MODEL})`, limiters().embed, () =>
+      const { body } = await withRetry<EmbedResponse>(
+        `batchEmbedContents(${GEMINI_EMBEDDING_MODEL})`,
+        (call) => embedQueue().run(texts.length, call),
+        () => undefined,
+        () =>
         fetch(`${BASE}/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents`, {
           method: 'POST',
           headers: { 'x-goog-api-key': GEMINI_API_KEY, 'content-type': 'application/json' },
