@@ -106,6 +106,14 @@ loudly if the parser changes, rather than corrupting offsets silently.
   misleading — waiting does not help until the next day. Each model has its own allowance, so
   switching model is a way to keep working. Batch sections into one call and cache per section;
   a paper should cost ~3 calls, and re-running a cached paper zero.
+- **The daily window is rolling, not calendar-day.** A model exhausted yesterday afternoon was still
+  exhausted the next morning while others had recovered. Aliases share a pool: `gemini-flash-latest`
+  went to 429 in lockstep with `gemini-3.8-flash`. Working pools observed 2026-09-05:
+  gemini-3.5-flash, gemini-3.7-flash, gemini-3.1-flash-lite. Probe before planning a run — a 429
+  costs no quota, so probing is free.
+- **Separate ingest from detection.** `analyze` re-extracts; `detect` and `corpus` run over stored
+  claims for zero extraction cost. Extraction caches per model, so switching model re-pays it in
+  full — that, not detection, is what burns a daily allowance.
 - **Deciding that two numbers describe the same measurement must stay deterministic.** Embedding
   similarity cannot do it — "BLEU on newstest2013 dev" and "BLEU on WMT14 EN-DE" are near-identical
   as text and are different measurements. Quantities carry `metric`/`system`/`dataset` labels and
