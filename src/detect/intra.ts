@@ -138,7 +138,11 @@ async function countClaims(documentId: string): Promise<number> {
 export async function detectIntraDocument(
   documentId: string,
   options: RefineOptions = { classify: true, verify: true },
-): Promise<{ stats: DetectionStats; results: IntraFinding[] }> {
+): Promise<{
+  stats: DetectionStats;
+  results: IntraFinding[];
+  rejected: { finding: IntraFinding; verification: { objection: string; rejectionReason: string | null } | null }[];
+}> {
   const db = getDb();
 
   const claims = await countClaims(documentId);
@@ -191,6 +195,8 @@ export async function detectIntraDocument(
     deterministicConflict: true,
   });
   const results = refined.filter((row) => row.reported).map((row) => row.finding);
+  // Kept so a caller can show why a candidate was dropped.
+  const rejected = refined.filter((row) => !row.reported);
 
   // Replace prior results for this document so re-running is idempotent.
   await db.execute(sql`
@@ -240,6 +246,7 @@ export async function detectIntraDocument(
   }
 
   return {
+    rejected,
     stats: {
       claims,
       allPairsBaseline: (claims * (claims - 1)) / 2,

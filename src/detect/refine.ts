@@ -57,6 +57,8 @@ export interface RefineStats {
   rejectedNotContradiction: number;
   /** Dropped by stage 6 because the contradiction could not be defended with quoted spans. */
   rejectedByVerifier: number;
+  /** Breakdown of stage-6 rejections, so a drop can be diagnosed rather than guessed at. */
+  verifierRejectionReasons: Record<string, number>;
   reported: number;
 }
 
@@ -71,6 +73,7 @@ export async function refineFindings<T extends RefinableFinding>(
     rejectedDifferentSubject: 0,
     rejectedNotContradiction: 0,
     rejectedByVerifier: 0,
+    verifierRejectionReasons: {},
     reported: 0,
   };
 
@@ -137,8 +140,11 @@ export async function refineFindings<T extends RefinableFinding>(
   for (const index of surviving) {
     const verification = options.verify ? verifications.get(index) ?? null : null;
     const reported = !options.verify || verification?.passed === true;
-    if (!reported) stats.rejectedByVerifier += 1;
-    else stats.reported += 1;
+    if (!reported) {
+      stats.rejectedByVerifier += 1;
+      const reason = verification?.rejectionReason ?? 'unknown';
+      stats.verifierRejectionReasons[reason] = (stats.verifierRejectionReasons[reason] ?? 0) + 1;
+    } else stats.reported += 1;
 
     results.push({
       finding: findings[index]!,

@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto';
+import { and, eq, inArray } from 'drizzle-orm';
+import { getConfig } from '../config.js';
+import { getDb } from '../db/client.js';
+import { verificationCache } from '../db/schema.js';
 import { generateStructured } from '../llm/gemini.js';
 
 /**
@@ -32,6 +37,11 @@ export interface Verification {
   objection: string;
   /** Spans it could quote to establish the conflict; empty means it could not. */
   quotedSpans: string[];
+  /**
+   * Why the finding was dropped, when it was. Without this a rejection is indistinguishable from
+   * a bug, and stage 6 is the stage that decides what gets reported.
+   */
+  rejectionReason: 'objection-succeeded' | 'span-not-quoted' | 'span-not-found' | 'not-returned' | null;
 }
 
 const SCHEMA = {
@@ -93,32 +103,83 @@ interface RawVerification {
   spanFromB?: string;
 }
 
-/** Verifies one batch. Makes exactly one LLM call. */
+/** Whitespace-insensitive containment, so a reflowed quote is not mistaken for an invented one. */
+function containsSpan(haystack: string, span: string): boolean {
+  const normalise = (value: string) => value.replace(/\s+/g, ' ').trim();
+  return normalise(haystack).includes(normalise(span));
+}
+
+function adjudicate(finding: FindingForVerification, row: RawVerification | undefined): Verification {
+  // Unverified is not verified. A finding the verifier skipped does not get the benefit of doubt.
+  if (!row) {
+    return {
+      index: finding.index, passed: false, objection: 'Not returned by the verifier.',
+      quotedSpans: [], rejectionReason: 'not-returned',
+    };
+  }
+
+  const objection = row.strongestObjection ?? '';
+  if (row.objectionSucceeds !== false) {
+    return { index: finding.index, passed: false, objection, quotedSpans: [], rejectionReason: 'objection-succeeded' };
+  }
+
+  const spans = [row.spanFromA, row.spanFromB].filter((s): s is string => Boolean(s?.trim()));
+  if (spans.length !== 2) {
+    return { index: finding.index, passed: false, objection, quotedSpans: [], rejectionReason: 'span-not-quoted' };
+  }
+
+  // Spans must genuinely come from the claims — an invented quote would let a fabricated finding
+  // through the one gate meant to stop it.
+  if (!containsSpan(finding.a.text, spans[0]!) || !containsSpan(finding.b.text, spans[1]!)) {
+    return { index: finding.index, passed: false, objection, quotedSpans: spans, rejectionReason: 'span-not-found' };
+  }
+
+  return { index: finding.index, passed: true, objection, quotedSpans: spans, rejectionReason: null };
+}
+
+function findingHash(finding: FindingForVerification): string {
+  return createHash('sha256').update(`${finding.a.text}\u0000${finding.b.text}`).digest('hex');
+}
+
+/** Verifies a batch, reusing cached results. Makes at most one LLM call. */
 export async function verifyBatch(findings: FindingForVerification[]): Promise<Verification[]> {
   if (findings.length === 0) return [];
-  const raw = await generateStructured<RawVerification[]>(buildPrompt(findings), { responseSchema: SCHEMA });
+  const { GEMINI_MODEL } = getConfig();
+  const db = getDb();
 
-  const byIndex = new Map(raw.map((row) => [row.index, row]));
-  return findings.map((finding): Verification => {
-    const row = byIndex.get(finding.index);
-    // Unverified is not verified. A finding the verifier skipped does not get the benefit of doubt.
-    if (!row) {
-      return { index: finding.index, passed: false, objection: 'Not verified.', quotedSpans: [] };
+  const hashes = new Map(findings.map((f) => [f.index, findingHash(f)]));
+  const cached = await db
+    .select({ contentHash: verificationCache.contentHash, result: verificationCache.result })
+    .from(verificationCache)
+    .where(
+      and(
+        inArray(verificationCache.contentHash, [...hashes.values()]),
+        eq(verificationCache.model, GEMINI_MODEL),
+        eq(verificationCache.promptVersion, VERIFIER_PROMPT_VERSION),
+      ),
+    );
+  const byHash = new Map(cached.map((row) => [row.contentHash, row.result as RawVerification]));
+
+  const missing = findings.filter((f) => !byHash.has(hashes.get(f.index)!));
+
+  if (missing.length > 0) {
+    const raw = await generateStructured<RawVerification[]>(buildPrompt(missing), { responseSchema: SCHEMA });
+    const byIndex = new Map(raw.map((row) => [row.index, row]));
+    for (const finding of missing) {
+      const row = byIndex.get(finding.index);
+      if (!row) continue;
+      byHash.set(hashes.get(finding.index)!, row);
+      await db
+        .insert(verificationCache)
+        .values({
+          contentHash: hashes.get(finding.index)!,
+          model: GEMINI_MODEL,
+          promptVersion: VERIFIER_PROMPT_VERSION,
+          result: row,
+        })
+        .onConflictDoNothing();
     }
+  }
 
-    const spans = [row.spanFromA, row.spanFromB].filter((s): s is string => Boolean(s?.trim()));
-    // Both spans must be quotable, and they must genuinely come from the claims — a span the model
-    // invented would let a fabricated finding through the one gate meant to stop it.
-    const quotesCheckOut =
-      spans.length === 2 &&
-      finding.a.text.includes(spans[0]!.trim()) &&
-      finding.b.text.includes(spans[1]!.trim());
-
-    return {
-      index: finding.index,
-      passed: row.objectionSucceeds === false && quotesCheckOut,
-      objection: row.strongestObjection ?? '',
-      quotedSpans: quotesCheckOut ? spans : [],
-    };
-  });
+  return findings.map((finding) => adjudicate(finding, byHash.get(hashes.get(finding.index)!)));
 }

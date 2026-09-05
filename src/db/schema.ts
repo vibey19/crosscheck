@@ -182,6 +182,27 @@ export const classificationCache = pgTable(
   ],
 );
 
+/**
+ * Memoised stage-6 verifications.
+ *
+ * Stage 6 decides what gets reported, so its decisions have to be inspectable after the fact —
+ * a rejection that cannot be examined is indistinguishable from a bug. Caching also keeps the
+ * ablation's two arms comparable and cheap under a 20-request daily cap.
+ */
+export const verificationCache = pgTable(
+  'verification_cache',
+  {
+    contentHash: text('content_hash').notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    result: jsonb('result').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('verification_cache_key_idx').on(table.contentHash, table.model, table.promptVersion),
+  ],
+);
+
 /** Claim pairs that survived candidate generation — the stage-4 cost killer. */
 export const candidatePairs = pgTable(
   'candidate_pairs',

@@ -125,7 +125,8 @@ function printDetectionStats(
   if (stats.refine) {
     const r = stats.refine;
     out.write(`stage 5:     ${refine.classify ? `${r.classifierCalls} calls · ${r.rejectedDifferentSubject} different subject · ${r.rejectedNotContradiction} not a contradiction` : 'DISABLED'}\n`);
-    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended` : 'DISABLED'}\n`);
+    const reasons = Object.entries(r.verifierRejectionReasons).map(([k, v]) => `${v} ${k}`).join(' · ');
+    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended${reasons ? ` (${reasons})` : ''}` : 'DISABLED'}\n`);
   }
 }
 
@@ -168,10 +169,17 @@ async function detect(
     throw new Error(`${parsedId} has no stored claims. Run: analyze ${parsedId}`);
   }
 
-  const { stats, results } = await detectIntraDocument(documentId, refine);
+  const { stats, results, rejected } = await detectIntraDocument(documentId, refine);
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify({ arxivId: parsedId, detection: stats, ablation: refine,
+      rejected: rejected.map((row) => ({
+        values: [row.finding.conflict.a.value, row.finding.conflict.b.value],
+        reason: row.verification?.rejectionReason ?? null,
+        objection: row.verification?.objection ?? null,
+        a: row.finding.a.text.slice(0, 120),
+        b: row.finding.b.text.slice(0, 120),
+      })),
       findings: results.map((f) => ({
         confidence: f.confidence, rationale: f.rationale,
         values: [f.conflict.a.value, f.conflict.b.value], unit: f.conflict.a.unit,
