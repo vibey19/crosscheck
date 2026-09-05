@@ -89,6 +89,19 @@ structure, character offsets and hashes — not paper text. Full source is fetch
 gitignored, TTL'd local cache that is never served, and every request is rate limited to arXiv's
 one-per-three-seconds ceiling on a single connection.
 
+## Running the benchmark
+
+```bash
+npm run crosscheck -- eval 1706.03762 2001.08361 2203.15556 --per-paper 3 --seed 42
+npm run eval:write-results        # rewrites the results block above from the recorded run
+```
+
+`--no-verifier` and `--no-classifier` switch stages 6 and 5 off, which is how the ablation is run:
+both arms are the same program with one stage disabled, not two different programs.
+
+A nightly GitHub Action re-runs it and commits the table if it moved. It needs `DATABASE_URL`,
+`DATABASE_URL_UNPOOLED`, `GEMINI_API_KEY` and `ARXIV_USER_AGENT` as repository secrets.
+
 ## Layout
 
 ```

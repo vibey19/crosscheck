@@ -1,0 +1,81 @@
+name: benchmark
+
+# The results table is the point of this project, so it is regenerated from a real run rather than
+# hand-maintained. Runs nightly and on demand.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      papers:
+        description: 'Space-separated arXiv ids'
+        required: false
+        default: '1706.03762 2001.08361 2203.15556'
+      per_paper:
+        description: 'Injections per paper'
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # A free-tier quota rejection should not read as a broken build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ARXIV_USER_AGENT: ${{ secrets.ARXIV_USER_AGENT }}
+        run: npm run db:migrate
+
+      - name: Run benchmark
+        id: bench
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ARXIV_USER_AGENT: ${{ secrets.ARXIV_USER_AGENT }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+        run: |
+          npm run crosscheck -- eval ${{ github.event.inputs.papers || '1706.03762 2001.08361 2203.15556' }} \
+            --per-paper ${{ github.event.inputs.per_paper || '3' }} --seed 42
+
+      - name: Write results into the README
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ARXIV_USER_AGENT: ${{ secrets.ARXIV_USER_AGENT }}
+        run: npm run eval:write-results
+
+      - name: Commit the table if it changed
+        run: |
+          if git diff --quiet README.md; then
+            echo "No change to the results table."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Update benchmark results from nightly run"
+          git push
