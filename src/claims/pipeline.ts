@@ -1,10 +1,18 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { getConfig } from '../config.js';
 import { getDb } from '../db/client.js';
-import { claims as claimsTable, documents, sections as sectionsTable } from '../db/schema.js';
+import {
+  claims as claimsTable, documents, embeddingCache, EMBEDDING_DIMS, sections as sectionsTable,
+} from '../db/schema.js';
 import { embedTexts } from '../llm/gemini.js';
 import type { IngestedDocument } from '../ingest/pipeline.js';
 import { sectionText } from '../ingest/pipeline.js';
+import { createHash } from 'node:crypto';
 import { extractClaims, shouldExtract, type LocatedClaim, type SectionForExtraction } from './extract.js';
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 export interface ExtractionStats {
   sectionsConsidered: number;
@@ -14,6 +22,9 @@ export interface ExtractionStats {
   claims: number;
   spansResolved: number;
   byType: Record<string, number>;
+  /** Vectors reused from the cache rather than re-embedded. */
+  embeddingsReused: number;
+  embeddingsComputed: number;
 }
 
 /** Embedding requests per batch. Kept modest so one rejected batch costs little to retry. */
@@ -72,6 +83,8 @@ export async function extractDocumentClaims(doc: IngestedDocument): Promise<Extr
     claims: 0,
     spansResolved: 0,
     byType: {},
+    embeddingsReused: 0,
+    embeddingsComputed: 0,
   };
 
   const pending: { sectionId: string; claim: LocatedClaim }[] = [];
@@ -90,12 +103,45 @@ export async function extractDocumentClaims(doc: IngestedDocument): Promise<Extr
   await db.delete(claimsTable).where(eq(claimsTable.documentId, documentRow.id));
   if (pending.length === 0) return stats;
 
+  const { GEMINI_EMBEDDING_MODEL } = getConfig();
+  // Key on the exact text embedded, which includes the subject line.
+  const keyFor = (claim: LocatedClaim) => sha256(embeddingText(claim));
+  const keys = new Map(pending.map(({ claim }, index) => [index, keyFor(claim)]));
+
+  const cachedRows = await db
+    .select({ contentHash: embeddingCache.contentHash, embedding: embeddingCache.embedding })
+    .from(embeddingCache)
+    .where(
+      and(
+        inArray(embeddingCache.contentHash, [...new Set(keys.values())]),
+        eq(embeddingCache.model, GEMINI_EMBEDDING_MODEL),
+        eq(embeddingCache.dims, EMBEDDING_DIMS),
+      ),
+    );
+  const vectorByKey = new Map(cachedRows.map((row) => [row.contentHash, row.embedding]));
+
+  const needed = [...new Set([...keys.values()].filter((key) => !vectorByKey.has(key)))];
+  const textByKey = new Map(pending.map(({ claim }) => [keyFor(claim), embeddingText(claim)]));
+
+  for (let start = 0; start < needed.length; start += EMBED_BATCH) {
+    const batchKeys = needed.slice(start, start + EMBED_BATCH);
+    const vectors = await embedTexts(batchKeys.map((key) => textByKey.get(key)!));
+    for (const [index, key] of batchKeys.entries()) {
+      vectorByKey.set(key, vectors[index]!);
+      await db
+        .insert(embeddingCache)
+        .values({ contentHash: key, model: GEMINI_EMBEDDING_MODEL, dims: EMBEDDING_DIMS, embedding: vectors[index]! })
+        .onConflictDoNothing();
+    }
+  }
+
+  stats.embeddingsComputed = needed.length;
+  stats.embeddingsReused = new Set(keys.values()).size - needed.length;
+
   for (let start = 0; start < pending.length; start += EMBED_BATCH) {
     const batch = pending.slice(start, start + EMBED_BATCH);
-    const vectors = await embedTexts(batch.map(({ claim }) => embeddingText(claim)));
-
     await db.insert(claimsTable).values(
-      batch.map(({ sectionId, claim }, index) => ({
+      batch.map(({ sectionId, claim }, offset) => ({
         documentId: documentRow.id,
         sectionId,
         text: claim.text,
@@ -105,7 +151,7 @@ export async function extractDocumentClaims(doc: IngestedDocument): Promise<Extr
         claimType: claim.claimType,
         subject: claim.subject,
         quantities: claim.quantities,
-        embedding: vectors[index]!,
+        embedding: vectorByKey.get(keys.get(start + offset)!)!,
         contentHash: claim.contentHash,
       })),
     );

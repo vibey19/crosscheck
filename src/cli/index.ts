@@ -240,6 +240,7 @@ async function analyze(
   out.write(`claims:      ${extraction.claims} from ${extraction.sectionsConsidered} sections `);
   out.write(`(${extraction.sectionsFromCache} cached, ${extraction.llmCalls} LLM calls)\n`);
   out.write(`spans:       ${extraction.spansResolved}/${extraction.claims} located verbatim\n`);
+  out.write(`embeddings:  ${extraction.embeddingsReused} reused · ${extraction.embeddingsComputed} computed\n`);
   out.write(`types:       ${Object.entries(extraction.byType).map(([k, v]) => `${k} ${v}`).join(' · ')}\n`);
   printDetectionStats(stats, refine);
 

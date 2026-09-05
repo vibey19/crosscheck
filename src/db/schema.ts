@@ -203,6 +203,29 @@ export const verificationCache = pgTable(
   ],
 );
 
+/**
+ * Durable embedding store, keyed on claim text.
+ *
+ * The embedding quota is metered per TEXT, not per request: the free tier allows 1000 embedded
+ * contents per day, and one re-analysis of a 230-claim paper spends a quarter of that. Claim text
+ * is already content-addressed, and an unchanged claim's vector never changes, so re-embedding it
+ * is pure waste. This outlives the claims rows themselves, which are deleted and rebuilt on every
+ * extraction.
+ */
+export const embeddingCache = pgTable(
+  'embedding_cache',
+  {
+    contentHash: text('content_hash').notNull(),
+    model: text('model').notNull(),
+    dims: integer('dims').notNull(),
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMS }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('embedding_cache_key_idx').on(table.contentHash, table.model, table.dims),
+  ],
+);
+
 /** Claim pairs that survived candidate generation — the stage-4 cost killer. */
 export const candidatePairs = pgTable(
   'candidate_pairs',
