@@ -6,6 +6,7 @@ import { ingestDocument, sectionHash, sectionText, type IngestedDocument } from 
 import { parseArxivId } from '../ingest/arxiv/id.js';
 import { extractDocumentClaims, getDocumentId } from '../claims/pipeline.js';
 import { detectIntraDocument, type IntraFinding } from '../detect/intra.js';
+import { detectCrossDocument } from '../detect/cross.js';
 
 const USAGE = `crosscheck — cross-document contradiction engine
 
@@ -13,11 +14,13 @@ Usage:
   npm run crosscheck -- ingest  <arxiv-id> [--json] [--save] [--preview N]
   npm run crosscheck -- analyze <arxiv-id> [--json] [--no-verifier] [--no-classifier]
   npm run crosscheck -- detect  <arxiv-id> [--json] [--no-verifier] [--no-classifier]
+  npm run crosscheck -- corpus  <id> <id> [<id>...] [--json] [--no-verifier] [--no-classifier]
 
 Commands:
   ingest    Fetch a paper and print its section tree with character offsets
   analyze   Ingest, extract claims, and check the paper against itself
   detect    Re-run detection over claims already stored, with no extraction
+  corpus    Find contradictions ACROSS several already-analyzed papers
 
 Arguments:
   <arxiv-id>    2301.12345, 2301.12345v2, math/0309136, or an arxiv.org URL
@@ -248,9 +251,89 @@ async function analyze(
   out.write(`${emb.calls} embed calls (${emb.items} vectors)\n`);
 }
 
+async function corpus(
+  arxivIds: string[],
+  asJson: boolean,
+  refine: { classify: boolean; verify: boolean },
+): Promise<void> {
+  const ids = arxivIds.map((raw) => parseArxivId(raw).id);
+  const { stats, results } = await detectCrossDocument(ids, refine);
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({
+      corpus: ids,
+      detection: stats,
+      ablation: refine,
+      findings: results.map((f) => ({
+        conflictType: f.conflictType,
+        confidence: f.confidence,
+        rationale: f.rationale,
+        similarity: f.similarity,
+        metric: f.conflict.a.metric,
+        values: [f.conflict.a.value, f.conflict.b.value],
+        sources: [
+          {
+            arxivId: f.a.arxivId, version: f.a.version, title: f.a.title,
+            url: `https://arxiv.org/abs/${f.a.arxivId}v${f.a.version}`,
+            section: f.a.sectionPath, charStart: f.a.charStart, charEnd: f.a.charEnd, text: f.a.text,
+          },
+          {
+            arxivId: f.b.arxivId, version: f.b.version, title: f.b.title,
+            url: `https://arxiv.org/abs/${f.b.arxivId}v${f.b.version}`,
+            section: f.b.sectionPath, charStart: f.b.charStart, charEnd: f.b.charEnd, text: f.b.text,
+          },
+        ],
+      })),
+      usage: meter.snapshot(),
+    }, null, 2)}\n`);
+    return;
+  }
+
+  const out = process.stdout;
+  out.write(`\ncorpus:      ${stats.documents} papers · ${stats.claims} claims\n`);
+  out.write(`candidates:  ${stats.candidatePairs} pairs from ${stats.allPairsBaseline.toLocaleString()} possible `);
+  out.write(`(${stats.allPairsBaseline > 0 ? (100 - (stats.candidatePairs / stats.allPairsBaseline) * 100).toFixed(2) : '0'}% filtered out)\n`);
+  out.write(`type filter: ${stats.survivedTypeFilter} survived · ${stats.numericPairsCompared} quantity comparisons\n`);
+  out.write(`arithmetic:  ${stats.arithmeticCandidates} candidate conflicts\n`);
+  if (stats.refine) {
+    const r = stats.refine;
+    out.write(`stage 5:     ${refine.classify ? `${r.classifierCalls} calls · ${r.rejectedDifferentSubject} different subject` : 'DISABLED'}\n`);
+    out.write(`stage 6:     ${refine.verify ? `${r.verifierCalls} calls · ${r.rejectedByVerifier} could not be defended` : 'DISABLED'}\n`);
+  }
+
+  if (results.length === 0) {
+    out.write('\nNo cross-document numeric contradictions found.\n');
+    return;
+  }
+  out.write(`\n${results.length} cross-document contradiction${results.length === 1 ? '' : 's'} found\n`);
+  for (const [i, f] of results.entries()) {
+    out.write(`\n${i + 1}. ${f.conflict.a.metric ?? ''} — ${f.conflict.a.value} vs ${f.conflict.b.value}`);
+    out.write(`  (confidence ${f.confidence.toFixed(2)})\n`);
+    for (const side of [f.a, f.b]) {
+      out.write(`   ${side.arxivId}v${side.version} · ${side.sectionPath}  [${side.charStart}, ${side.charEnd})\n`);
+      out.write(`     "${side.text.replace(/\s+/g, ' ').slice(0, 140)}"\n`);
+      out.write(`     https://arxiv.org/abs/${side.arxivId}v${side.version}\n`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const [command, ...rest] = argv;
+
+  if (command === 'corpus') {
+    const ids = rest.filter((arg) => !arg.startsWith('-'));
+    if (ids.length < 2) {
+      process.stdout.write(USAGE);
+      process.exitCode = 1;
+      return;
+    }
+    await corpus(ids, rest.includes('--json'), {
+      classify: !rest.includes('--no-classifier'),
+      verify: !rest.includes('--no-verifier'),
+    });
+    return;
+  }
 
   if (command === 'detect' && rest.length > 0 && !rest[0]?.startsWith('-')) {
     await detect(rest[0]!, rest.includes('--json'), {
